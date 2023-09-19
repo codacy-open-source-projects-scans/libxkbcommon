@@ -221,6 +221,7 @@ libxkbcommon_sources = [
     'src/keymap.c',
     'src/keymap.h',
     'src/keymap-priv.c',
+    'src/messages-codes.h',
     'src/scanner-utils.h',
     'src/state.c',
     'src/text.c',
@@ -416,10 +417,13 @@ man_pages = []
 # Tools
 build_tools = get_option('enable-tools') and cc.has_header_symbol('getopt.h', 'getopt_long', prefix: '#define _GNU_SOURCE')
 if build_tools
-    libxkbcommon_tools_internal = static_library(
-        'tools-internal',
+    libxkbcommon_tools_internal_sources = [
         'tools/tools-common.h',
         'tools/tools-common.c',
+    ]
+    libxkbcommon_tools_internal = static_library(
+        'tools-internal',
+        libxkbcommon_tools_internal_sources,
         dependencies: dep_libxkbcommon,
     )
     tools_dep = declare_dependency(
@@ -467,6 +471,15 @@ if build_tools
                    install_dir: dir_libexec)
         configh_data.set10('HAVE_XKBCLI_INTERACTIVE_EVDEV', true)
         install_man('tools/xkbcli-interactive-evdev.1')
+        # The same tool again, but with access to some private APIs.
+        executable('interactive-evdev',
+                'tools/interactive-evdev.c',
+                libxkbcommon_sources,
+                libxkbcommon_tools_internal_sources,
+                dependencies: [tools_dep],
+                c_args: ['-DENABLE_PRIVATE_APIS'],
+                include_directories: [include_directories('src', 'include')],
+                install: false)
     endif
     if get_option('enable-x11')
         x11_tools_dep = declare_dependency(
@@ -530,6 +543,15 @@ You can disable the Wayland xkbcli programs with -Denable-wayland=false.''')
                    install_dir: dir_libexec)
         install_man('tools/xkbcli-list.1')
     endif
+
+    executable('xkb-check-messages',
+               'tools/check-messages.c',
+               'tools/messages.c',
+               'tools/messages.h',
+               'src/messages-codes.h',
+               dependencies: [tools_dep],
+               include_directories: [include_directories('src', 'include', 'tools')],
+               install: false)
 endif
 
 
@@ -573,9 +595,11 @@ test_dep = declare_dependency(
     link_with: libxkbcommon_test_internal,
 )
 if get_option('enable-x11')
-    libxkbcommon_x11_internal = static_library(
+    libxkbcommon_x11_test_internal = static_library(
         'xkbcommon-x11-internal',
         libxkbcommon_x11_sources,
+        'test/xvfb-wrapper.c',
+        'test/xvfb-wrapper.h',
         include_directories: include_directories('src', 'include'),
         link_with: libxkbcommon_test_internal,
         dependencies: [
@@ -584,7 +608,7 @@ if get_option('enable-x11')
         ],
     )
     x11_test_dep = declare_dependency(
-        link_with: libxkbcommon_x11_internal,
+        link_with: libxkbcommon_x11_test_internal,
         dependencies: [
             test_dep,
             xcb_dep,
@@ -683,15 +707,28 @@ test(
     executable('test-modifiers', 'test/modifiers.c', dependencies: test_dep),
     env: test_env,
 )
+test(
+    'messages',
+    executable(
+        'test-messages',
+        'test/messages.c',
+        'tools/messages.c',
+        'tools/messages.h',
+        include_directories: include_directories('src', 'include', 'tools'),
+        dependencies: test_dep),
+    env: test_env,
+)
 if get_option('enable-x11')
     test(
         'x11',
         executable('test-x11', 'test/x11.c', dependencies: x11_test_dep),
         env: test_env,
     )
-    # test/x11comp is meant to be run, but it is (temporarily?) disabled.
-    # See: https://github.com/xkbcommon/libxkbcommon/issues/30
-    executable('test-x11comp', 'test/x11comp.c', dependencies: x11_test_dep)
+    test(
+        'x11comp',
+        executable('test-x11comp', 'test/x11comp.c', dependencies: x11_test_dep),
+        env: test_env,
+    )
 endif
 if get_option('enable-xkbregistry')
     test(
@@ -800,6 +837,7 @@ You can disable the documentation with -Denable-docs=false.''')
         'doc/user-configuration.md',
         'doc/rules-format.md',
         'doc/keymap-format-text-v1.md',
+        'doc/message-registry.md',
         'include/xkbcommon/xkbcommon.h',
         'include/xkbcommon/xkbcommon-compose.h',
         'include/xkbcommon/xkbcommon-keysyms.h',
