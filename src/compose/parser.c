@@ -63,9 +63,6 @@ OR PERFORMANCE OF THIS SOFTWARE.
 #include "utf8.h"
 #include "parser.h"
 
-#define MAX_LHS_LEN 10
-#define MAX_INCLUDE_DEPTH 5
-
 /*
  * Grammar adapted from libX11/modules/im/ximcp/imLcPrs.c.
  * See also the XCompose(5) manpage.
@@ -174,6 +171,7 @@ skip_more_whitespace_and_comments:
         while (!scanner_eof(s) && !scanner_eol(s) && scanner_peek(s) != '\"') {
             if (scanner_chr(s, '\\')) {
                 uint8_t o;
+                size_t start_pos = s->pos;
                 if (scanner_chr(s, '\\')) {
                     scanner_buf_append(s, '\\');
                 }
@@ -181,16 +179,30 @@ skip_more_whitespace_and_comments:
                     scanner_buf_append(s, '"');
                 }
                 else if (scanner_chr(s, 'x') || scanner_chr(s, 'X')) {
-                    if (scanner_hex(s, &o))
+                    if (scanner_hex(s, &o) && is_valid_char((char) o)) {
                         scanner_buf_append(s, (char) o);
-                    else
-                        scanner_warn(s, "illegal hexadecimal escape sequence in string literal");
+                    } else {
+                        scanner_warn_with_code(s,
+                            XKB_WARNING_INVALID_ESCAPE_SEQUENCE,
+                            "illegal hexadecimal escape sequence (%.*s) in string literal",
+                            (int) (s->pos - start_pos + 1), &s->s[start_pos - 1]);
+                    }
                 }
-                else if (scanner_oct(s, &o)) {
+                else if (scanner_oct(s, &o) && is_valid_char((char) o)) {
                     scanner_buf_append(s, (char) o);
                 }
+                else if (s->pos > start_pos) {
+                    scanner_warn_with_code(s,
+                        XKB_WARNING_INVALID_ESCAPE_SEQUENCE,
+                        "illegal octal escape sequence (%.*s) in string literal",
+                        (int) (s->pos - start_pos + 1), &s->s[start_pos - 1]);
+                    /* Ignore. */
+                }
                 else {
-                    scanner_warn(s, "unknown escape sequence (%c) in string literal", scanner_peek(s));
+                    scanner_warn_with_code(s,
+                        XKB_WARNING_UNKNOWN_CHAR_ESCAPE_SEQUENCE,
+                        "unknown escape sequence (\\%c) in string literal",
+                        scanner_peek(s));
                     /* Ignore. */
                 }
             } else {
@@ -727,7 +739,9 @@ parse_file(struct xkb_compose_table *table, FILE *file, const char *file_name)
 
     ok = map_file(file, &string, &size);
     if (!ok) {
-        log_err(table->ctx, "Couldn't read Compose file %s: %s\n",
+        log_err(table->ctx,
+                XKB_LOG_MESSAGE_NO_ID,
+                "Couldn't read Compose file %s: %s\n",
                 file_name, strerror(errno));
         return false;
     }

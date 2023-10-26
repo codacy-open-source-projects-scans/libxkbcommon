@@ -62,9 +62,6 @@
 #include "keysym.h"
 
 
-// TODO: convert log_err to log_err_with_code
-// TODO: convert log_vrb to log_vrb_with_code
-
 enum key_repeat {
     KEY_REPEAT_UNDEFINED = 0,
     KEY_REPEAT_YES = 1,
@@ -245,8 +242,8 @@ MergeGroups(SymbolsInfo *info, GroupInfo *into, GroupInfo *from, bool clobber,
             xkb_atom_t ignore = (clobber ? into->type : from->type);
 
             if (report) {
-                log_warn_with_code(info->ctx,
-                         XKB_WARNING_CONFLICTING_KEY_TYPE,
+                log_warn(info->ctx,
+                         XKB_WARNING_CONFLICTING_KEY_TYPE_MERGING_GROUPS,
                          "Multiple definitions for group %d type of key %s; "
                          "Using %s, ignoring %s\n",
                          group + 1, KeyNameText(info->ctx, key_name),
@@ -291,7 +288,7 @@ MergeGroups(SymbolsInfo *info, GroupInfo *into, GroupInfo *from, bool clobber,
             ignore = (clobber ? &intoLevel->action : &fromLevel->action);
 
             if (report) {
-                log_warn_with_code(info->ctx,
+                log_warn(info->ctx,
                          XKB_WARNING_CONFLICTING_KEY_ACTION,
                          "Multiple actions for level %d/group %u on key %s; "
                          "Using %s, ignoring %s\n",
@@ -316,7 +313,7 @@ MergeGroups(SymbolsInfo *info, GroupInfo *into, GroupInfo *from, bool clobber,
         }
         else if (!XkbLevelsSameSyms(fromLevel, intoLevel)) {
             if (report) {
-                log_warn_with_code(info->ctx,
+                log_warn(info->ctx,
                          XKB_WARNING_CONFLICTING_KEY_SYMBOL,
                          "Multiple symbols for level %d/group %u on key %s; "
                          "Using %s, ignoring %s\n",
@@ -417,7 +414,7 @@ MergeKeys(SymbolsInfo *info, KeyInfo *into, KeyInfo *from, bool same_file)
     }
 
     if (collide) {
-        log_warn_with_code(info->ctx,
+        log_warn(info->ctx,
                  XKB_WARNING_CONFLICTING_KEY_FIELDS,
                  "Symbol map for key %s redefined; "
                  "Using %s definition for conflicting fields\n",
@@ -477,7 +474,7 @@ AddModMapEntry(SymbolsInfo *info, ModMapEntry *new)
         ignore = (clobber ? old->modifier : new->modifier);
 
         if (new->haveSymbol) {
-            log_warn_with_code(info->ctx,
+            log_warn(info->ctx,
                      XKB_WARNING_CONFLICTING_MODMAP,
                      "Symbol \"%s\" added to modifier map for multiple modifiers; "
                      "Using %s, ignoring %s\n",
@@ -485,7 +482,7 @@ AddModMapEntry(SymbolsInfo *info, ModMapEntry *new)
                      ModIndexText(info->ctx, &info->mods, use),
                      ModIndexText(info->ctx, &info->mods, ignore));
         } else {
-            log_warn_with_code(info->ctx,
+            log_warn(info->ctx,
                      XKB_WARNING_CONFLICTING_MODMAP,
                      "Key \"%s\" added to modifier map for multiple modifiers; "
                      "Using %s, ignoring %s\n",
@@ -593,6 +590,7 @@ HandleIncludeSymbols(SymbolsInfo *info, IncludeStmt *include)
             next_incl.explicit_group = atoi(stmt->modifier) - 1;
             if (next_incl.explicit_group >= XKB_MAX_GROUPS) {
                 log_err(info->ctx,
+                        XKB_ERROR_UNSUPPORTED_GROUP_INDEX,
                         "Cannot set explicit group to %d - must be between 1..%d; "
                         "Ignoring group number\n",
                         next_incl.explicit_group + 1, XKB_MAX_GROUPS);
@@ -641,6 +639,7 @@ GetGroupIndex(SymbolsInfo *info, KeyInfo *keyi, ExprDef *arrayNdx,
 
         if (i >= XKB_MAX_GROUPS) {
             log_err(info->ctx,
+                    XKB_ERROR_UNSUPPORTED_GROUP_INDEX,
                     "Too many groups of %s for key %s (max %u); "
                     "Ignoring %s defined for extra groups\n",
                     name, KeyInfoText(info, keyi), XKB_MAX_GROUPS, name);
@@ -653,7 +652,7 @@ GetGroupIndex(SymbolsInfo *info, KeyInfo *keyi, ExprDef *arrayNdx,
     }
 
     if (!ExprResolveGroup(info->ctx, arrayNdx, ndx_rtrn)) {
-        log_err_with_code(info->ctx, XKB_ERROR_UNSUPPORTED_GROUP_INDEX,
+        log_err(info->ctx, XKB_ERROR_UNSUPPORTED_GROUP_INDEX,
                 "Illegal group index for %s of key %s\n"
                 "Definition with non-integer array index ignored\n",
                 name, KeyInfoText(info, keyi));
@@ -687,6 +686,7 @@ AddSymbolsToKey(SymbolsInfo *info, KeyInfo *keyi, ExprDef *arrayNdx,
 
     if (value->expr.op != EXPR_KEYSYM_LIST) {
         log_err(info->ctx,
+                XKB_ERROR_WRONG_FIELD_TYPE,
                 "Expected a list of symbols, found %s; "
                 "Ignoring symbols for group %u of %s\n",
                 expr_op_type_to_string(value->expr.op), ndx + 1,
@@ -696,6 +696,7 @@ AddSymbolsToKey(SymbolsInfo *info, KeyInfo *keyi, ExprDef *arrayNdx,
 
     if (groupi->defined & GROUP_FIELD_SYMS) {
         log_err(info->ctx,
+                XKB_ERROR_CONFLICTING_KEY_SYMBOLS_ENTRY,
                 "Symbols for key %s, group %u already defined; "
                 "Ignoring duplicate definition\n",
                 KeyInfoText(info, keyi), ndx + 1);
@@ -756,7 +757,7 @@ AddActionsToKey(SymbolsInfo *info, KeyInfo *keyi, ExprDef *arrayNdx,
     }
 
     if (value->expr.op != EXPR_ACTION_LIST) {
-        log_wsgo(info->ctx,
+        log_wsgo(info->ctx, XKB_LOG_MESSAGE_NO_ID,
                  "Bad expression type (%d) for action list value; "
                  "Ignoring actions for group %u of %s\n",
                  value->expr.op, ndx, KeyInfoText(info, keyi));
@@ -764,7 +765,7 @@ AddActionsToKey(SymbolsInfo *info, KeyInfo *keyi, ExprDef *arrayNdx,
     }
 
     if (groupi->defined & GROUP_FIELD_ACTS) {
-        log_wsgo(info->ctx,
+        log_wsgo(info->ctx, XKB_LOG_MESSAGE_NO_ID,
                  "Actions for key %s, group %u already defined\n",
                  KeyInfoText(info, keyi), ndx);
         return false;
@@ -785,6 +786,7 @@ AddActionsToKey(SymbolsInfo *info, KeyInfo *keyi, ExprDef *arrayNdx,
 
         if (!HandleActionDef(info->ctx, info->actions, &info->mods, act, toAct))
             log_err(info->ctx,
+                    XKB_ERROR_INVALID_VALUE,
                     "Illegal action definition for %s; "
                     "Action for group %u/level %u ignored\n",
                     KeyInfoText(info, keyi), ndx + 1, i + 1);
@@ -816,6 +818,7 @@ SetSymbolsField(SymbolsInfo *info, KeyInfo *keyi, const char *field,
 
         if (!ExprResolveString(info->ctx, value, &val)) {
             log_err(info->ctx,
+                    XKB_ERROR_WRONG_FIELD_TYPE,
                     "The type field of a key symbol map must be a string; "
                     "Ignoring illegal type definition\n");
             return false;
@@ -826,7 +829,7 @@ SetSymbolsField(SymbolsInfo *info, KeyInfo *keyi, const char *field,
             keyi->defined |= KEY_FIELD_DEFAULT_TYPE;
         }
         else if (!ExprResolveGroup(info->ctx, arrayNdx, &ndx)) {
-            log_err_with_code(info->ctx, XKB_ERROR_UNSUPPORTED_GROUP_INDEX,
+            log_err(info->ctx, XKB_ERROR_UNSUPPORTED_GROUP_INDEX,
                     "Illegal group index for type of key %s; "
                     "Definition with non-integer array index ignored\n",
                     KeyInfoText(info, keyi));
@@ -854,6 +857,7 @@ SetSymbolsField(SymbolsInfo *info, KeyInfo *keyi, const char *field,
         if (!ExprResolveModMask(info->ctx, value, MOD_VIRT, &info->mods,
                                 &mask)) {
             log_err(info->ctx,
+                    XKB_ERROR_UNSUPPORTED_MODIFIER_MASK,
                     "Expected a virtual modifier mask, found %s; "
                     "Ignoring virtual modifiers definition for key %s\n",
                     expr_op_type_to_string(value->expr.op),
@@ -868,6 +872,7 @@ SetSymbolsField(SymbolsInfo *info, KeyInfo *keyi, const char *field,
              istreq(field, "lock") ||
              istreq(field, "locks")) {
         log_vrb(info->ctx, 1,
+                XKB_WARNING_UNSUPPORTED_SYMBOLS_FIELD,
                 "Key behaviors not supported; "
                 "Ignoring locking specification for key %s\n",
                 KeyInfoText(info, keyi));
@@ -876,6 +881,7 @@ SetSymbolsField(SymbolsInfo *info, KeyInfo *keyi, const char *field,
              istreq(field, "permanentradiogroup") ||
              istreq(field, "allownone")) {
         log_vrb(info->ctx, 1,
+                XKB_WARNING_UNSUPPORTED_SYMBOLS_FIELD,
                 "Radio groups not supported; "
                 "Ignoring radio group specification for key %s\n",
                 KeyInfoText(info, keyi));
@@ -883,6 +889,7 @@ SetSymbolsField(SymbolsInfo *info, KeyInfo *keyi, const char *field,
     else if (istreq_prefix("overlay", field) ||
              istreq_prefix("permanentoverlay", field)) {
         log_vrb(info->ctx, 1,
+                XKB_WARNING_UNSUPPORTED_SYMBOLS_FIELD,
                 "Overlays not supported; "
                 "Ignoring overlay specification for key %s\n",
                 KeyInfoText(info, keyi));
@@ -894,6 +901,7 @@ SetSymbolsField(SymbolsInfo *info, KeyInfo *keyi, const char *field,
 
         if (!ExprResolveEnum(info->ctx, value, &val, repeatEntries)) {
             log_err(info->ctx,
+                    XKB_ERROR_INVALID_VALUE,
                     "Illegal repeat setting for %s; "
                     "Non-boolean repeat setting ignored\n",
                     KeyInfoText(info, keyi));
@@ -909,6 +917,7 @@ SetSymbolsField(SymbolsInfo *info, KeyInfo *keyi, const char *field,
 
         if (!ExprResolveBoolean(info->ctx, value, &set)) {
             log_err(info->ctx,
+                    XKB_ERROR_INVALID_VALUE,
                     "Illegal groupsWrap setting for %s; "
                     "Non-boolean value ignored\n",
                     KeyInfoText(info, keyi));
@@ -924,6 +933,7 @@ SetSymbolsField(SymbolsInfo *info, KeyInfo *keyi, const char *field,
 
         if (!ExprResolveBoolean(info->ctx, value, &set)) {
             log_err(info->ctx,
+                    XKB_ERROR_INVALID_VALUE,
                     "Illegal groupsClamp setting for %s; "
                     "Non-boolean value ignored\n",
                     KeyInfoText(info, keyi));
@@ -938,7 +948,7 @@ SetSymbolsField(SymbolsInfo *info, KeyInfo *keyi, const char *field,
         xkb_layout_index_t grp;
 
         if (!ExprResolveGroup(info->ctx, value, &grp)) {
-            log_err_with_code(info->ctx, XKB_ERROR_UNSUPPORTED_GROUP_INDEX,
+            log_err(info->ctx, XKB_ERROR_UNSUPPORTED_GROUP_INDEX,
                     "Illegal group index for redirect of key %s; "
                     "Definition with non-integer group ignored\n",
                     KeyInfoText(info, keyi));
@@ -951,6 +961,7 @@ SetSymbolsField(SymbolsInfo *info, KeyInfo *keyi, const char *field,
     }
     else {
         log_err(info->ctx,
+                XKB_ERROR_UNKNOWN_FIELD,
                 "Unknown field %s in a symbol interpretation; "
                 "Definition ignored\n",
                 field);
@@ -968,13 +979,14 @@ SetGroupName(SymbolsInfo *info, ExprDef *arrayNdx, ExprDef *value)
 
     if (!arrayNdx) {
         log_vrb(info->ctx, 1,
+                XKB_WARNING_MISSING_SYMBOLS_GROUP_NAME_INDEX,
                 "You must specify an index when specifying a group name; "
                 "Group name definition without array subscript ignored\n");
         return false;
     }
 
     if (!ExprResolveGroup(info->ctx, arrayNdx, &group)) {
-        log_err_with_code(info->ctx, XKB_ERROR_UNSUPPORTED_GROUP_INDEX,
+        log_err(info->ctx, XKB_ERROR_UNSUPPORTED_GROUP_INDEX,
                 "Illegal index in group name definition; "
                 "Definition with non-integer array index ignored\n");
         return false;
@@ -982,6 +994,7 @@ SetGroupName(SymbolsInfo *info, ExprDef *arrayNdx, ExprDef *value)
 
     if (!ExprResolveString(info->ctx, value, &name)) {
         log_err(info->ctx,
+                XKB_ERROR_WRONG_FIELD_TYPE,
                 "Group name must be a string; "
                 "Illegal name for group %d ignored\n", group);
         return false;
@@ -994,7 +1007,7 @@ SetGroupName(SymbolsInfo *info, ExprDef *arrayNdx, ExprDef *value)
         group_to_use = info->explicit_group;
     }
     else {
-        log_warn_with_code(info->ctx,
+        log_warn(info->ctx,
                  XKB_WARNING_NON_BASE_GROUP_NAME,
                  "An explicit group was specified for the '%s' map, "
                  "but it provides a name for a group other than Group1 (%d); "
@@ -1032,23 +1045,27 @@ HandleGlobalVar(SymbolsInfo *info, VarDef *stmt)
     else if (!elem && (istreq(field, "groupswrap") ||
                        istreq(field, "wrapgroups"))) {
         log_err(info->ctx,
+                XKB_WARNING_UNSUPPORTED_SYMBOLS_FIELD,
                 "Global \"groupswrap\" not supported; Ignored\n");
         ret = true;
     }
     else if (!elem && (istreq(field, "groupsclamp") ||
                        istreq(field, "clampgroups"))) {
         log_err(info->ctx,
+                XKB_WARNING_UNSUPPORTED_SYMBOLS_FIELD,
                 "Global \"groupsclamp\" not supported; Ignored\n");
         ret = true;
     }
     else if (!elem && (istreq(field, "groupsredirect") ||
                        istreq(field, "redirectgroups"))) {
         log_err(info->ctx,
+                XKB_WARNING_UNSUPPORTED_SYMBOLS_FIELD,
                 "Global \"groupsredirect\" not supported; Ignored\n");
         ret = true;
     }
     else if (!elem && istreq(field, "allownone")) {
         log_err(info->ctx,
+                XKB_WARNING_UNSUPPORTED_SYMBOLS_FIELD,
                 "Radio groups not supported; "
                 "Ignoring \"allownone\" specification\n");
         ret = true;
@@ -1071,6 +1088,7 @@ HandleSymbolsBody(SymbolsInfo *info, VarDef *def, KeyInfo *keyi)
     for (; def; def = (VarDef *) def->common.next) {
         if (def->name && def->name->expr.op == EXPR_FIELD_REF) {
             log_err(info->ctx,
+                    XKB_ERROR_WRONG_SCOPE,
                     "Cannot set a global default value from within a key statement; "
                     "Move statements to the global file scope\n");
             continue;
@@ -1114,7 +1132,7 @@ SetExplicitGroup(SymbolsInfo *info, KeyInfo *keyi)
     }
 
     if (warn) {
-        log_warn_with_code(info->ctx,
+        log_warn(info->ctx,
                  XKB_WARNING_MULTIPLE_GROUPS_AT_ONCE,
                  "For the map %s an explicit group specified, "
                  "but key %s has more than one group defined; "
@@ -1181,6 +1199,7 @@ HandleModMapDef(SymbolsInfo *info, ModMapDef *def)
         ndx = XkbModNameToIndex(&info->mods, def->modifier, MOD_REAL);
         if (ndx == XKB_MOD_INVALID) {
             log_err(info->ctx,
+                    XKB_ERROR_INVALID_REAL_MODIFIER,
                     "Illegal modifier map definition; "
                     "Ignoring map for non-modifier \"%s\"\n",
                     xkb_atom_text(ctx, def->modifier));
@@ -1206,6 +1225,7 @@ HandleModMapDef(SymbolsInfo *info, ModMapDef *def)
         }
         else {
             log_err(info->ctx,
+                    XKB_ERROR_INVALID_MODMAP_ENTRY,
                     "Modmap entries may contain only key names or keysyms; "
                     "Illegal definition for %s modifier ignored\n",
                     ModIndexText(info->ctx, &info->mods, tmp.modifier));
@@ -1244,6 +1264,7 @@ HandleSymbolsFile(SymbolsInfo *info, XkbFile *file, enum merge_mode merge)
             break;
         default:
             log_err(info->ctx,
+                    XKB_ERROR_WRONG_STATEMENT_TYPE,
                     "Symbols files may not include other types; "
                     "Ignoring %s\n", stmt_type_to_string(stmt->type));
             ok = false;
@@ -1254,7 +1275,9 @@ HandleSymbolsFile(SymbolsInfo *info, XkbFile *file, enum merge_mode merge)
             info->errorCount++;
 
         if (info->errorCount > 10) {
-            log_err(info->ctx, "Abandoning symbols file \"%s\"\n",
+            log_err(info->ctx,
+                    XKB_ERROR_INVALID_SYNTAX,
+                    "Abandoning symbols file \"%s\"\n",
                     file->name);
             break;
         }
@@ -1388,7 +1411,7 @@ FindTypeForGroup(struct xkb_keymap *keymap, KeyInfo *keyi,
     }
 
     if (type_name == XKB_ATOM_NONE) {
-        log_warn_with_code(keymap->ctx,
+        log_warn(keymap->ctx,
                  XKB_WARNING_CANNOT_INFER_KEY_TYPE,
                  "Couldn't find an automatic type for key '%s' group %d with %lu levels; "
                  "Using the default type\n",
@@ -1402,7 +1425,7 @@ FindTypeForGroup(struct xkb_keymap *keymap, KeyInfo *keyi,
             break;
 
     if (i >= keymap->num_types) {
-        log_warn_with_code(keymap->ctx,
+        log_warn(keymap->ctx,
                  XKB_WARNING_UNDEFINED_KEY_TYPE,
                  "The type \"%s\" for key '%s' group %d was not previously defined; "
                  "Using the default type\n",
@@ -1436,7 +1459,7 @@ CopySymbolsDefToKeymap(struct xkb_keymap *keymap, SymbolsInfo *info,
      */
     key = XkbKeyByName(keymap, keyi->name, false);
     if (!key) {
-        log_vrb_with_code(info->ctx, 5,
+        log_vrb(info->ctx, 5,
                 XKB_WARNING_UNDEFINED_KEYCODE,
                 "Key %s not found in keycodes; Symbols ignored\n",
                 KeyInfoText(info, keyi));
@@ -1480,7 +1503,7 @@ CopySymbolsDefToKeymap(struct xkb_keymap *keymap, SymbolsInfo *info,
         if (type->num_levels < darray_size(groupi->levels)) {
             struct xkb_level *leveli;
 
-            log_vrb_with_code(info->ctx, 1,
+            log_vrb(info->ctx, 1,
                     XKB_WARNING_EXTRA_SYMBOLS_IGNORED,
                     "Type \"%s\" has %d levels, but %s has %d levels; "
                     "Ignoring extra symbols\n",
@@ -1533,7 +1556,7 @@ CopyModMapDefToKeymap(struct xkb_keymap *keymap, SymbolsInfo *info,
     if (!entry->haveSymbol) {
         key = XkbKeyByName(keymap, entry->u.keyName, true);
         if (!key) {
-            log_vrb_with_code(info->ctx, 5,
+            log_vrb(info->ctx, 5,
                     XKB_WARNING_UNDEFINED_KEYCODE,
                     "Key %s not found in keycodes; "
                     "Modifier map entry for %s not updated\n",
@@ -1545,7 +1568,7 @@ CopyModMapDefToKeymap(struct xkb_keymap *keymap, SymbolsInfo *info,
     else {
         key = FindKeyForSymbol(keymap, entry->u.keySym);
         if (!key) {
-            log_vrb_with_code(info->ctx, 5,
+            log_vrb(info->ctx, 5,
                     XKB_WARNING_UNRESOLVED_KEYMAP_SYMBOL,
                     "Key \"%s\" not found in symbol map; "
                     "Modifier map entry for %s not updated\n",
@@ -1590,7 +1613,7 @@ CopySymbolsToKeymap(struct xkb_keymap *keymap, SymbolsInfo *info)
                 continue;
 
             if (key->num_groups < 1)
-                log_info(info->ctx,
+                log_info(info->ctx, XKB_LOG_MESSAGE_NO_ID,
                          "No symbols defined for %s\n",
                          KeyNameText(info->ctx, key->name));
         }
