@@ -57,8 +57,8 @@ OR PERFORMANCE OF THIS SOFTWARE.
 #include <errno.h>
 
 #include "utils.h"
-#include "scanner-utils.h"
 #include "table.h"
+#include "scanner-utils.h"
 #include "paths.h"
 #include "utf8.h"
 #include "parser.h"
@@ -244,10 +244,9 @@ skip_more_whitespace_and_comments:
         return TOK_IDENT;
     }
 
+    scanner_err(s, "unrecognized token");
     /* Discard rest of line. */
     scanner_skip_to_eol(s);
-
-    scanner_err(s, "unrecognized token");
     return TOK_ERROR;
 }
 
@@ -526,6 +525,16 @@ parse(struct xkb_compose_table *table, struct scanner *s,
     struct production production;
     enum { MAX_ERRORS = 10 };
     int num_errors = 0;
+
+    /* Basic detection of wrong character encoding.
+       The first character relevant to the grammar must be ASCII:
+       whitespace, include, modifier list, keysym, comment */
+    if (!scanner_check_supported_char_encoding(s)) {
+        scanner_err(s,
+                    "This could be a file encoding issue. "
+                    "Supported file encodings are ASCII and UTF-8.");
+        goto fail;
+    }
 
 initial:
     production.len = 0;
