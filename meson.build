@@ -228,6 +228,7 @@ libxkbcommon_sources = [
     'src/text.h',
     'src/utf8.c',
     'src/utf8.h',
+    'src/util-mem.h',
     'src/utils.c',
     'src/utils.h',
 ]
@@ -364,6 +365,7 @@ if get_option('enable-xkbregistry')
         'src/utils.c',
         'src/util-list.h',
         'src/util-list.c',
+        'src/util-mem.h',
     ]
     libxkbregistry_link_args = []
     libxkbregistry_link_deps = []
