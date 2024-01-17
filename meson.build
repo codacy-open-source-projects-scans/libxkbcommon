@@ -623,6 +623,7 @@ libxkbcommon_test_internal = static_library(
     'bench/bench.h',
     libxkbcommon_sources,
     include_directories: include_directories('src', 'include'),
+    c_args: ['-DENABLE_PRIVATE_APIS'],
 )
 test_dep = declare_dependency(
     include_directories: include_directories('src', 'include'),
@@ -650,9 +651,18 @@ if get_option('enable-x11')
         ],
     )
 endif
+# TODO: version range?
+keysyms_test_dep = [test_dep]
+keysyms_test_c_args = ['-DENABLE_PRIVATE_APIS']
+icu_dep = dependency('icu-uc', required: false)
+if icu_dep.found()
+    keysyms_test_dep += [icu_dep]
+    configh_data.set10('HAVE_ICU', true)
+endif
 test(
     'keysym',
-    executable('test-keysym', 'test/keysym.c', dependencies: test_dep),
+    executable('test-keysym', 'test/keysym.c', dependencies: keysyms_test_dep,
+               c_args: keysyms_test_c_args),
     env: test_env,
 )
 test(

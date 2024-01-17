@@ -28,6 +28,7 @@
 
 #include "test.h"
 #include "src/utf8.h"
+#include "src/keysym.h"
 #include "src/compose/parser.h"
 #include "src/compose/dump.h"
 
@@ -73,7 +74,7 @@ test_compose_seq_va(struct xkb_compose_table *table, va_list ap)
 {
     int ret;
     struct xkb_compose_state *state;
-    char buffer[64];
+    char buffer[MAX(XKB_COMPOSE_MAX_STRING_SIZE, XKB_KEYSYM_NAME_MAX_SIZE)];
 
     state = xkb_compose_state_new(table, XKB_COMPOSE_STATE_NO_FLAGS);
     assert(state);
@@ -707,7 +708,19 @@ static void
 test_traverse(struct xkb_context *ctx)
 {
     struct xkb_compose_table *table;
+    struct xkb_compose_table_iterator *iter;
 
+    /* Empty table */
+    table = xkb_compose_table_new_from_buffer(ctx, "", 0, "",
+                                              XKB_COMPOSE_FORMAT_TEXT_V1,
+                                              XKB_COMPOSE_COMPILE_NO_FLAGS);
+    assert(table);
+    iter = xkb_compose_table_iterator_new(table);
+    assert (xkb_compose_table_iterator_next(iter) == NULL);
+    xkb_compose_table_iterator_free(iter);
+    xkb_compose_table_unref(table);
+
+    /* Non-empty table */
     const char *buffer = "<dead_circumflex> <dead_circumflex> : \"foo\" X\n"
                          "<Ahook> <x> : \"foobar\"\n"
                          "<Multi_key> <o> <e> : oe\n"
@@ -724,7 +737,7 @@ test_traverse(struct xkb_context *ctx)
                                               XKB_COMPOSE_COMPILE_NO_FLAGS);
     assert(table);
 
-    struct xkb_compose_table_iterator *iter = xkb_compose_table_iterator_new(table);
+    iter = xkb_compose_table_iterator_new(table);
 
     test_eq_entry(xkb_compose_table_iterator_next(iter),
                   XKB_KEY_eacute, "é",
@@ -770,6 +783,27 @@ test_traverse(struct xkb_context *ctx)
 
     xkb_compose_table_iterator_free(iter);
     xkb_compose_table_unref(table);
+}
+
+static void
+test_string_length(struct xkb_context *ctx)
+{
+    // Invalid: empty string
+    const char table_string_1[] = "<a> <b> : \"\" X\n";
+    assert(test_compose_seq_buffer(ctx, table_string_1,
+        XKB_KEY_a, XKB_COMPOSE_FEED_ACCEPTED, XKB_COMPOSE_COMPOSING, "", XKB_KEY_NoSymbol,
+        XKB_KEY_b, XKB_COMPOSE_FEED_ACCEPTED, XKB_COMPOSE_COMPOSED,  "", XKB_KEY_X,
+        XKB_KEY_NoSymbol));
+
+    char long_string[XKB_COMPOSE_MAX_STRING_SIZE] = { 0 };
+    memset(long_string, 0x61, XKB_COMPOSE_MAX_STRING_SIZE - 1);
+    char table_string_2[XKB_COMPOSE_MAX_STRING_SIZE + sizeof(table_string_1) - 1];
+    assert(snprintf_safe(table_string_2, sizeof(table_string_2),
+                         "<a> <b> : \"%s\" X\n", long_string));
+    assert(test_compose_seq_buffer(ctx, table_string_2,
+        XKB_KEY_a, XKB_COMPOSE_FEED_ACCEPTED, XKB_COMPOSE_COMPOSING, "",          XKB_KEY_NoSymbol,
+        XKB_KEY_b, XKB_COMPOSE_FEED_ACCEPTED, XKB_COMPOSE_COMPOSED,  long_string, XKB_KEY_X,
+        XKB_KEY_NoSymbol));
 }
 
 static void
@@ -935,6 +969,7 @@ main(int argc, char *argv[])
     test_include(ctx);
     test_override(ctx);
     test_traverse(ctx);
+    test_string_length(ctx);
     test_decode_escape_sequences(ctx);
     test_encode_escape_sequences(ctx);
 
