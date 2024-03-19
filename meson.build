@@ -665,13 +665,15 @@ if icu_dep.found()
 endif
 test(
     'keysym',
-    executable('test-keysym', 'test/keysym.c', dependencies: keysyms_test_dep,
+    executable('test-keysym', 'test/keysym.c', 'test/keysym.h',
+               dependencies: keysyms_test_dep,
                c_args: keysyms_test_c_args),
     env: test_env,
 )
 test(
     'keymap',
-    executable('test-keymap', 'test/keymap.c', dependencies: test_dep),
+    executable('test-keymap', 'test/keymap.c', 'test/keysym.h',
+               dependencies: test_dep),
     env: test_env,
 )
 test(
@@ -771,11 +773,13 @@ if get_option('enable-x11')
         'x11',
         executable('test-x11', 'test/x11.c', dependencies: x11_test_dep),
         env: test_env,
+        is_parallel : false,
     )
     test(
         'x11comp',
         executable('test-x11comp', 'test/x11comp.c', dependencies: x11_test_dep),
         env: test_env,
+        is_parallel : false,
     )
 endif
 if get_option('enable-xkbregistry')
