@@ -1,7 +1,7 @@
 project(
     'libxkbcommon',
     'c',
-    version: '1.6.0',
+    version: '1.7.0',
     default_options: [
         'c_std=c11',
         'warning_level=2',
@@ -888,6 +888,7 @@ You can disable the documentation with -Denable-docs=false.''')
         'README.md',
         'doc/diagrams/xkb-configuration.dot',
         'doc/diagrams/xkb-keymap-components.dot',
+        'doc/diagrams/xkb-types-explanation.dot',
         'doc/doxygen-extra.css',
         'doc/introduction-to-xkb.md',
         'doc/quick-guide.md',
