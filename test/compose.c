@@ -896,6 +896,7 @@ test_encode_escape_sequences(struct xkb_context *ctx)
     char buf[1 + MAX_CODE_POINTS_COUNT * 4];
     for (int ascii = 1; ascii >= 0; ascii--) {
         for (size_t s = 0; s < SAMPLE_SIZE; s++) {
+            memset(buf, 0xab, sizeof(buf));
             /* Create the string */
             size_t length = 1 + (rand() % MAX_CODE_POINTS_COUNT);
             size_t c = 0;
@@ -952,7 +953,7 @@ main(int argc, char *argv[])
     if (argc == 2) {
         seed = atoi(argv[1]);
     } else {
-        seed = time(NULL);
+        seed = (int)time(NULL);
     }
     fprintf(stderr, "Seed for the pseudo-random generator: %d\n", seed);
     srand(seed);
@@ -965,7 +966,8 @@ main(int argc, char *argv[])
 #ifdef __linux__
     const char *srcdir = getenv("top_srcdir");
     clearenv();
-    setenv("top_srcdir", srcdir, 1);
+    if (srcdir)
+        setenv("top_srcdir", srcdir, 1);
 #else
     unsetenv("XCOMPOSEFILE");
     unsetenv("XDG_CONFIG_HOME");
