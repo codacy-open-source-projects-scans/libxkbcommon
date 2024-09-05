@@ -24,6 +24,7 @@
 #include "config.h"
 #include <time.h>
 #include <errno.h>
+#include <stdio.h>
 
 #include "xkbcommon/xkbcommon-compose.h"
 
@@ -31,7 +32,10 @@
 #include "src/utf8.h"
 #include "src/keysym.h"
 #include "src/compose/parser.h"
+#include "src/compose/escape.h"
 #include "src/compose/dump.h"
+#include "test/shuffle-lines.h"
+#include "test/compose-iter.h"
 
 static const char *
 compose_status_string(enum xkb_compose_status status)
@@ -717,8 +721,45 @@ test_eq_entry(struct xkb_compose_table_entry *entry, xkb_keysym_t keysym, const 
     return ok;
 }
 
+static bool
+test_eq_entries(struct xkb_compose_table_entry *entry1, struct xkb_compose_table_entry *entry2)
+{
+    if (!entry1 || !entry2)
+        goto error;
+    bool ok = true;
+    if (entry1->keysym != entry2->keysym ||
+        !streq_null(entry1->utf8, entry2->utf8) ||
+        entry1->sequence_length != entry2->sequence_length)
+        ok = false;
+    for (size_t k = 0; k < entry1->sequence_length; k++) {
+        if (entry1->sequence[k] != entry2->sequence[k])
+            ok = false;
+    }
+    if (ok)
+        return true;
+error:
+#define print_entry(msg, entry)                   \
+    fprintf(stderr, msg);                         \
+    if (entry)                                    \
+        print_compose_table_entry(stderr, entry); \
+    else                                          \
+        fprintf(stderr, "\n");
+    print_entry("Expected: ", entry1);
+    print_entry("Got:      ", entry2);
+#undef print_entry
+    return false;
+}
+
 static void
-test_traverse(struct xkb_context *ctx)
+compose_traverse_fn(struct xkb_compose_table_entry *entry_ref, void *data)
+{
+    struct xkb_compose_table_iterator *iter = (struct xkb_compose_table_iterator *)data;
+    struct xkb_compose_table_entry *entry = xkb_compose_table_iterator_next(iter);
+    assert(test_eq_entries(entry_ref, entry));
+}
+
+static void
+test_traverse(struct xkb_context *ctx, size_t quickcheck_loops)
 {
     struct xkb_compose_table *table;
     struct xkb_compose_table_iterator *iter;
@@ -796,6 +837,34 @@ test_traverse(struct xkb_context *ctx)
 
     xkb_compose_table_iterator_free(iter);
     xkb_compose_table_unref(table);
+
+    /* QuickCheck: shuffle compose file lines and compare against
+     * reference implementation */
+    char *input = test_read_file("locale/en_US.UTF-8/Compose");
+    assert(input);
+    struct text_line lines[6000];
+    size_t input_length = strlen(input);
+    size_t lines_count = split_lines(input, input_length, lines, ARRAY_SIZE(lines));
+    /* Note: we may add additional new line char */
+    char *shuffled = calloc(input_length + 1, sizeof(char));
+    assert(shuffled);
+    for (size_t k = 0; k < quickcheck_loops; k++) {
+        size_t shuffled_length = shuffle_lines(lines, lines_count, shuffled);
+        table = xkb_compose_table_new_from_buffer(ctx, shuffled, shuffled_length, "",
+                                                  XKB_COMPOSE_FORMAT_TEXT_V1,
+                                                  XKB_COMPOSE_COMPILE_NO_FLAGS);
+        assert(table);
+
+        iter = xkb_compose_table_iterator_new(table);
+        assert(iter);
+        xkb_compose_table_for_each(table, compose_traverse_fn, iter);
+        assert(xkb_compose_table_iterator_next(iter) == NULL);
+        xkb_compose_table_iterator_free(iter);
+
+        xkb_compose_table_unref(table);
+    }
+    free(shuffled);
+    free(input);
 }
 
 static void
@@ -938,6 +1007,72 @@ test_encode_escape_sequences(struct xkb_context *ctx)
 #   undef MAX_CODE_POINTS_COUNT
 }
 
+/* Roundtrip check: check that a table parsed from a file and the table parsed
+ * from the dump of the previous table are identical */
+static void
+test_roundtrip(struct xkb_context *ctx)
+{
+/* TODO: add support for systems without open_memstream */
+#if HAVE_OPEN_MEMSTREAM
+    bool ok = false;
+
+    /* Parse reference file */
+    char *input = test_read_file("locale/en_US.UTF-8/Compose");
+    assert(input);
+    size_t input_length = strlen(input);
+    struct xkb_compose_table *ref_table = xkb_compose_table_new_from_buffer(
+        ctx, input, input_length, "",
+        XKB_COMPOSE_FORMAT_TEXT_V1,
+        XKB_COMPOSE_COMPILE_NO_FLAGS
+    );
+    free(input);
+    assert(ref_table);
+
+    /* Dump reference Compose table */
+    char *output;
+    size_t output_length = 0;
+    FILE *output_file = open_memstream(&output, &output_length);
+    assert(output_file);
+
+    ok = xkb_compose_table_dump(output_file, ref_table);
+    fclose(output_file);
+    assert(input);
+
+    if (!ok) {
+        free(output);
+        xkb_compose_table_unref(ref_table);
+        exit(TEST_SETUP_FAILURE);
+    }
+
+    /* Parse dumped table */
+    struct xkb_compose_table *table = xkb_compose_table_new_from_buffer(
+        ctx, output, output_length, "",
+        XKB_COMPOSE_FORMAT_TEXT_V1,
+        XKB_COMPOSE_COMPILE_NO_FLAGS
+    );
+    free(output);
+    assert(table);
+
+    /* Check roundtrip by comparing table entries */
+    struct xkb_compose_table_iterator *iter = xkb_compose_table_iterator_new(table);
+    xkb_compose_table_for_each(ref_table, compose_traverse_fn, iter);
+    assert(xkb_compose_table_iterator_next(iter) == NULL);
+
+    xkb_compose_table_iterator_free(iter);
+    xkb_compose_table_unref(table);
+    xkb_compose_table_unref(ref_table);
+#endif
+}
+
+/* CLI positional arguments:
+ * 1. Seed for the pseudo-random generator:
+ *    - Leave it unset or set it to “-” to use current time.
+ *    - Use an integer to set it explicitly.
+ * 2. Number of quickcheck loops:
+ *    - Leave it unset to use the default. It depends if the `RUNNING_VALGRIND`
+ *      environment variable is set.
+ *    - Use an integer to set it explicitly.
+ */
 int
 main(int argc, char *argv[])
 {
@@ -950,13 +1085,23 @@ main(int argc, char *argv[])
 
     /* Initialize pseudo-random generator with program arg or current time */
     int seed;
-    if (argc == 2) {
+    if (argc >= 2 && !streq(argv[1], "-")) {
         seed = atoi(argv[1]);
     } else {
         seed = (int)time(NULL);
     }
     fprintf(stderr, "Seed for the pseudo-random generator: %d\n", seed);
     srand(seed);
+
+    /* Determine number of loops for quickchecks */
+    size_t quickcheck_loops = 100; /* Default */
+    if (argc > 2) {
+        /* From command-line */
+        quickcheck_loops = (size_t)atoi(argv[2]);
+    } else if (getenv("RUNNING_VALGRIND") != NULL) {
+        /* Reduce if running Valgrind */
+        quickcheck_loops = quickcheck_loops / 20;
+    }
 
     /*
      * Ensure no environment variables but “top_srcdir” is set. This ensures
@@ -985,10 +1130,11 @@ main(int argc, char *argv[])
     test_modifier_syntax(ctx);
     test_include(ctx);
     test_override(ctx);
-    test_traverse(ctx);
+    test_traverse(ctx, quickcheck_loops);
     test_string_length(ctx);
     test_decode_escape_sequences(ctx);
     test_encode_escape_sequences(ctx);
+    test_roundtrip(ctx);
 
     xkb_context_unref(ctx);
     return 0;

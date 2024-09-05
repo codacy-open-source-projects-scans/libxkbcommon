@@ -133,6 +133,9 @@ if cc.has_header_symbol('stdio.h', 'asprintf', prefix: system_ext_define)
 elif cc.has_header_symbol('stdio.h', 'vasprintf', prefix: system_ext_define)
     configh_data.set('HAVE_VASPRINTF', 1)
 endif
+if cc.has_header_symbol('stdio.h', 'open_memstream', prefix: system_ext_define)
+    configh_data.set('HAVE_OPEN_MEMSTREAM', 1)
+endif
 if cc.has_header_symbol('stdlib.h', 'secure_getenv', prefix: system_ext_define)
     configh_data.set('HAVE_SECURE_GETENV', 1)
 elif cc.has_header_symbol('stdlib.h', '__secure_getenv', prefix: system_ext_define)
@@ -503,6 +506,9 @@ if build_tools
     # Tool: compose
     executable('xkbcli-compile-compose',
                'tools/compile-compose.c',
+               'src/compose/dump.c',
+               'src/compose/dump.h',
+               'src/compose/escape.h',
                dependencies: tools_dep,
                install: true,
                install_dir: dir_libexec)
@@ -765,7 +771,18 @@ test(
 )
 test(
     'compose',
-    executable('test-compose', 'test/compose.c', dependencies: test_dep),
+    executable(
+        'test-compose',
+        'test/compose.c',
+        'test/shuffle-lines.c',
+        'test/shuffle-lines.h',
+        'test/compose-iter.c',
+        'test/compose-iter.h',
+        'src/compose/dump.c',
+        'src/compose/dump.h',
+        'src/compose/escape.h',
+        dependencies: test_dep
+    ),
     env: test_env,
 )
 test(
@@ -853,6 +870,8 @@ if valgrind.found()
                        '--track-origins=yes',
                        '--gen-suppressions=all',
                        '--error-exitcode=99'],
+        # This is used in some tests, to avoid excessive run time.
+        env: {'RUNNING_VALGRIND': '1'},
         timeout_multiplier : 10)
 else
     message('valgrind not found, disabling valgrind test setup')
@@ -898,7 +917,15 @@ benchmark(
 )
 benchmark(
     'compose-traversal',
-    executable('bench-compose-traversal', 'bench/compose-traversal.c', dependencies: test_dep),
+    executable(
+        'bench-compose-traversal',
+        'bench/compose-traversal.c',
+        'bench/bench.h',
+        'test/compose-iter.c',
+        'test/compose-iter.h',
+        'test/test.h',
+        dependencies: test_dep
+    ),
     env: bench_env,
 )
 benchmark(
