@@ -61,30 +61,32 @@
  * We try not to trust the server too much and be paranoid. If we get
  * something which we definitely shouldn't, we fail.
  */
-#define FAIL_UNLESS(expr) do {                                          \
-    if (!(expr)) {                                                      \
-        log_err(keymap->ctx, XKB_LOG_MESSAGE_NO_ID,                                            \
-                "x11: failed to get keymap from X server: unmet condition in %s(): %s\n", \
-                __func__, STRINGIFY(expr));                             \
-        goto fail;                                                      \
-    }                                                                   \
+#define FAIL_UNLESS(expr) do {                              \
+    if (!(expr)) {                                          \
+        log_err(keymap->ctx, XKB_LOG_MESSAGE_NO_ID,         \
+                "x11: failed to get keymap from X server: " \
+                "unmet condition in %s(): %s\n",            \
+                __func__, STRINGIFY(expr));                 \
+        goto fail;                                          \
+    }                                                       \
 } while (0)
 
-#define FAIL_IF_BAD_REPLY(reply, request_name) do {                     \
-    if (!reply) {                                                       \
-        log_err(keymap->ctx, XKB_LOG_MESSAGE_NO_ID,                                            \
-                "x11: failed to get keymap from X server: %s request failed\n", \
-                (request_name));                                        \
-        goto fail;                                                      \
-    }                                                                   \
+#define FAIL_IF_BAD_REPLY(reply, request_name) do {         \
+    if (!reply) {                                           \
+        log_err(keymap->ctx, XKB_LOG_MESSAGE_NO_ID,         \
+                "x11: failed to get keymap from X server: " \
+                "%s request failed\n",                      \
+                (request_name));                            \
+        goto fail;                                          \
+    }                                                       \
 } while (0)
 
-#define ALLOC_OR_FAIL(arr, nmemb) do {                                  \
-    if ((nmemb) > 0) {                                                  \
-        (arr) = calloc((nmemb), sizeof(*(arr)));                        \
-        if (!(arr))                                                     \
-            goto fail;                                                  \
-    }                                                                   \
+#define ALLOC_OR_FAIL(arr, nmemb) do {                      \
+    if ((nmemb) > 0) {                                      \
+        (arr) = calloc((nmemb), sizeof(*(arr)));            \
+        if (!(arr))                                         \
+            goto fail;                                      \
+    }                                                       \
 } while (0)
 
 static const xcb_xkb_map_part_t get_map_required_components =
@@ -1143,12 +1145,14 @@ xkb_x11_keymap_new_from_device(struct xkb_context *ctx,
     const enum xkb_keymap_format format = XKB_KEYMAP_FORMAT_TEXT_V1;
 
     if (flags & ~(XKB_KEYMAP_COMPILE_NO_FLAGS)) {
-        log_err_func(ctx, "unrecognized flags: %#x\n", flags);
+        log_err_func(ctx, XKB_LOG_MESSAGE_NO_ID,
+                     "unrecognized flags: %#x\n", flags);
         return NULL;
     }
 
     if (device_id < 0 || device_id > 127) {
-        log_err_func(ctx, "illegal device ID: %d\n", device_id);
+        log_err_func(ctx, XKB_LOG_MESSAGE_NO_ID,
+                     "illegal device ID: %d\n", device_id);
         return NULL;
     }
 

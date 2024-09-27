@@ -59,28 +59,16 @@ struct scanner {
 
 #define scanner_log_with_code(scanner, level, log_msg_id, fmt, ...) \
     xkb_log_with_code((scanner)->ctx, (level), 0, log_msg_id, \
-                    "%s:%zu:%zu: " fmt "\n", \
-                    (scanner)->file_name, \
-                    (scanner)->token_line, \
-                    (scanner)->token_column, ##__VA_ARGS__)
+                      "%s:%zu:%zu: " fmt "\n", \
+                      (scanner)->file_name, \
+                      (scanner)->token_line, \
+                      (scanner)->token_column, ##__VA_ARGS__)
 
-#define scanner_log(scanner, level, fmt, ...) \
-    xkb_log((scanner)->ctx, (level), 0, \
-            "%s:%zu:%zu: " fmt "\n", \
-            (scanner)->file_name, \
-            (scanner)->token_line, (scanner)->token_column, ##__VA_ARGS__)
-
-#define scanner_err_with_code(scanner, id, fmt, ...) \
+#define scanner_err(scanner, id, fmt, ...) \
     scanner_log_with_code(scanner, XKB_LOG_LEVEL_ERROR, id, fmt, ##__VA_ARGS__)
 
-#define scanner_err(scanner, fmt, ...) \
-    scanner_log(scanner, XKB_LOG_LEVEL_ERROR, fmt, ##__VA_ARGS__)
-
-#define scanner_warn_with_code(scanner, id, fmt, ...) \
+#define scanner_warn(scanner, id, fmt, ...) \
     scanner_log_with_code(scanner, XKB_LOG_LEVEL_WARNING, id, fmt, ##__VA_ARGS__)
-
-#define scanner_warn(scanner, fmt, ...) \
-    scanner_log(scanner, XKB_LOG_LEVEL_WARNING, fmt, ##__VA_ARGS__)
 
 static inline void
 scanner_init(struct scanner *s, struct xkb_context *ctx,
@@ -227,14 +215,16 @@ scanner_check_supported_char_encoding(struct scanner *scanner)
     if (scanner->s[0] == '\0' || scanner->s[1] == '\0') {
         if (scanner->s[0] != '\0')
             scanner->token_column++;
-        scanner_err(scanner, "unexpected NULL character.");
+        scanner_err(scanner, XKB_LOG_MESSAGE_NO_ID,
+                    "unexpected NULL character.");
         return false;
     }
     /* Enforce the first character to be ASCII.
        See the note before the use of this function, that explains the relevant
        parts of the grammars of rules, keymap components and Compose. */
     if (!is_ascii(scanner->s[0])) {
-        scanner_err(scanner, "unexpected non-ASCII character.");
+        scanner_err(scanner, XKB_LOG_MESSAGE_NO_ID,
+                    "unexpected non-ASCII character.");
         return false;
     }
 

@@ -62,6 +62,7 @@ OR PERFORMANCE OF THIS SOFTWARE.
 #include "paths.h"
 #include "utf8.h"
 #include "parser.h"
+#include "keysym.h"
 
 /*
  * Grammar adapted from libX11/modules/im/ximcp/imLcPrs.c.
@@ -146,11 +147,13 @@ skip_more_whitespace_and_comments:
         while (scanner_peek(s) != '>' && !scanner_eol(s) && !scanner_eof(s))
             scanner_buf_append(s, scanner_next(s));
         if (!scanner_chr(s, '>')) {
-            scanner_err(s, "unterminated keysym literal");
+            scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                        "unterminated keysym literal");
             return TOK_ERROR;
         }
         if (!scanner_buf_append(s, '\0')) {
-            scanner_err(s, "keysym literal is too long");
+            scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                        "keysym literal is too long");
             return TOK_ERROR;
         }
         val->string.str = s->buf;
@@ -182,27 +185,28 @@ skip_more_whitespace_and_comments:
                     if (scanner_hex(s, &o) && is_valid_char((char) o)) {
                         scanner_buf_append(s, (char) o);
                     } else {
-                        scanner_warn_with_code(s,
-                            XKB_WARNING_INVALID_ESCAPE_SEQUENCE,
-                            "illegal hexadecimal escape sequence (%.*s) in string literal",
-                            (int) (s->pos - start_pos + 1), &s->s[start_pos - 1]);
+                        scanner_warn(s, XKB_WARNING_INVALID_ESCAPE_SEQUENCE,
+                                     "illegal hexadecimal escape sequence (%.*s) "
+                                     "in string literal",
+                                     (int) (s->pos - start_pos + 1),
+                                     &s->s[start_pos - 1]);
                     }
                 }
                 else if (scanner_oct(s, &o) && is_valid_char((char) o)) {
                     scanner_buf_append(s, (char) o);
                 }
                 else if (s->pos > start_pos) {
-                    scanner_warn_with_code(s,
-                        XKB_WARNING_INVALID_ESCAPE_SEQUENCE,
-                        "illegal octal escape sequence (%.*s) in string literal",
-                        (int) (s->pos - start_pos + 1), &s->s[start_pos - 1]);
+                    scanner_warn(s, XKB_WARNING_INVALID_ESCAPE_SEQUENCE,
+                                 "illegal octal escape sequence (%.*s) "
+                                 "in string literal",
+                                 (int) (s->pos - start_pos + 1),
+                                 &s->s[start_pos - 1]);
                     /* Ignore. */
                 }
                 else {
-                    scanner_warn_with_code(s,
-                        XKB_WARNING_UNKNOWN_CHAR_ESCAPE_SEQUENCE,
-                        "unknown escape sequence (\\%c) in string literal",
-                        scanner_peek(s));
+                    scanner_warn(s, XKB_WARNING_UNKNOWN_CHAR_ESCAPE_SEQUENCE,
+                                 "unknown escape sequence (\\%c) in string literal",
+                                 scanner_peek(s));
                     /* Ignore. */
                 }
             } else {
@@ -210,15 +214,18 @@ skip_more_whitespace_and_comments:
             }
         }
         if (!scanner_chr(s, '\"')) {
-            scanner_err(s, "unterminated string literal");
+            scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                        "unterminated string literal");
             return TOK_ERROR;
         }
         if (!scanner_buf_append(s, '\0')) {
-            scanner_err(s, "string literal is too long");
+            scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                        "string literal is too long");
             return TOK_ERROR;
         }
         if (!is_valid_utf8(s->buf, s->buf_pos - 1)) {
-            scanner_err(s, "string literal is not a valid UTF-8 string");
+            scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                        "string literal is not a valid UTF-8 string");
             return TOK_ERROR;
         }
         val->string.str = s->buf;
@@ -232,7 +239,8 @@ skip_more_whitespace_and_comments:
         while (is_alnum(scanner_peek(s)) || scanner_peek(s) == '_')
             scanner_buf_append(s, scanner_next(s));
         if (!scanner_buf_append(s, '\0')) {
-            scanner_err(s, "identifier is too long");
+            scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                        "identifier is too long");
             return TOK_ERROR;
         }
 
@@ -244,7 +252,8 @@ skip_more_whitespace_and_comments:
         return TOK_IDENT;
     }
 
-    scanner_err(s, "unrecognized token");
+    scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                "unrecognized token");
     /* Discard rest of line. */
     scanner_skip_to_eol(s);
     return TOK_ERROR;
@@ -263,7 +272,8 @@ lex_include_string(struct scanner *s, struct xkb_compose_table *table,
     s->buf_pos = 0;
 
     if (!scanner_chr(s, '\"')) {
-        scanner_err(s, "include statement must be followed by a path");
+        scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                    "include statement must be followed by a path");
         return TOK_ERROR;
     }
 
@@ -275,23 +285,28 @@ lex_include_string(struct scanner *s, struct xkb_compose_table *table,
             else if (scanner_chr(s, 'H')) {
                 const char *home = xkb_context_getenv(table->ctx, "HOME");
                 if (!home) {
-                    scanner_err(s, "%%H was used in an include statement, but the HOME environment variable is not set");
+                    scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                                "%%H was used in an include statement, "
+                                "but the HOME environment variable is not set");
                     return TOK_ERROR;
                 }
                 if (!scanner_buf_appends(s, home)) {
-                    scanner_err(s, "include path after expanding %%H is too long");
+                    scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                                "include path after expanding %%H is too long");
                     return TOK_ERROR;
                 }
             }
             else if (scanner_chr(s, 'L')) {
                 char *path = get_locale_compose_file_path(table->ctx, table->locale);
                 if (!path) {
-                    scanner_err(s, "failed to expand %%L to the locale Compose file");
+                    scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                                "failed to expand %%L to the locale Compose file");
                     return TOK_ERROR;
                 }
                 if (!scanner_buf_appends(s, path)) {
                     free(path);
-                    scanner_err(s, "include path after expanding %%L is too long");
+                    scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                                "include path after expanding %%L is too long");
                     return TOK_ERROR;
                 }
                 free(path);
@@ -299,12 +314,14 @@ lex_include_string(struct scanner *s, struct xkb_compose_table *table,
             else if (scanner_chr(s, 'S')) {
                 const char *xlocaledir = get_xlocaledir_path(table->ctx);
                 if (!scanner_buf_appends(s, xlocaledir)) {
-                    scanner_err(s, "include path after expanding %%S is too long");
+                    scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                                "include path after expanding %%S is too long");
                     return TOK_ERROR;
                 }
             }
             else {
-                scanner_err(s, "unknown %% format (%c) in include statement", scanner_peek(s));
+                scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                            "unknown %% format (%c) in include statement", scanner_peek(s));
                 return TOK_ERROR;
             }
         } else {
@@ -312,11 +329,13 @@ lex_include_string(struct scanner *s, struct xkb_compose_table *table,
         }
     }
     if (!scanner_chr(s, '\"')) {
-        scanner_err(s, "unterminated include statement");
+        scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                    "unterminated include statement");
         return TOK_ERROR;
     }
     if (!scanner_buf_append(s, '\0')) {
-        scanner_err(s, "include path is too long");
+        scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                    "include path is too long");
         return TOK_ERROR;
     }
     val_out->string.str = s->buf;
@@ -349,7 +368,9 @@ add_production(struct xkb_compose_table *table, struct scanner *s,
 
     /* Warn before potentially going over the limit, discard silently after. */
     if (darray_size(table->nodes) + production->len + MAX_LHS_LEN > MAX_COMPOSE_NODES)
-        scanner_warn(s, "too many sequences for one Compose file; will ignore further lines");
+        scanner_warn(s, XKB_LOG_MESSAGE_NO_ID,
+                     "too many sequences for one Compose file; "
+                     "will ignore further lines");
     if (darray_size(table->nodes) + production->len >= MAX_COMPOSE_NODES)
         return;
 
@@ -397,7 +418,9 @@ add_production(struct xkb_compose_table *table, struct scanner *s,
             curr = node->hikid;
         } else if (!last) {
             if (node->is_leaf) {
-                scanner_warn(s, "a sequence already exists which is a prefix of this sequence; overriding");
+                scanner_warn(s, XKB_LOG_MESSAGE_NO_ID,
+                             "a sequence already exists which is a prefix of "
+                             "this sequence; overriding");
                 node->internal.eqkid = 0;
                 node->internal.is_leaf = false;
             }
@@ -420,13 +443,18 @@ add_production(struct xkb_compose_table *table, struct scanner *s,
                         node->leaf.keysym == production->keysym
                     );
                 if (same_string && same_keysym) {
-                    scanner_warn(s, "this compose sequence is a duplicate of another; skipping line");
+                    scanner_warn(s, XKB_LOG_MESSAGE_NO_ID,
+                                 "this compose sequence is a duplicate of another; "
+                                 "skipping line");
                     return;
                 } else {
-                    scanner_warn(s, "this compose sequence already exists; overriding");
+                    scanner_warn(s, XKB_LOG_MESSAGE_NO_ID,
+                                 "this compose sequence already exists; overriding");
                 }
             } else if (node->internal.eqkid != 0) {
-                scanner_warn(s, "this compose sequence is a prefix of another; skipping line");
+                scanner_warn(s, XKB_LOG_MESSAGE_NO_ID,
+                             "this compose sequence is a prefix of another; "
+                             "skipping line");
                 return;
             }
             node->is_leaf = true;
@@ -501,21 +529,24 @@ do_include(struct xkb_compose_table *table, struct scanner *s,
     struct scanner new_s;
 
     if (include_depth >= MAX_INCLUDE_DEPTH) {
-        scanner_err(s, "maximum include depth (%d) exceeded; maybe there is an include loop?",
+        scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                    "maximum include depth (%d) exceeded; maybe there is an include loop?",
                     MAX_INCLUDE_DEPTH);
         return false;
     }
 
     file = fopen(path, "rb");
     if (!file) {
-        scanner_err(s, "failed to open included Compose file \"%s\": %s",
+        scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                    "failed to open included Compose file \"%s\": %s",
                     path, strerror(errno));
         return false;
     }
 
     ok = map_file(file, &string, &size);
     if (!ok) {
-        scanner_err(s, "failed to read included Compose file \"%s\": %s",
+        scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                    "failed to read included Compose file \"%s\": %s",
                     path, strerror(errno));
         goto err_file;
     }
@@ -548,7 +579,7 @@ parse(struct xkb_compose_table *table, struct scanner *s,
        The first character relevant to the grammar must be ASCII:
        whitespace, include, modifier list, keysym, comment */
     if (!scanner_check_supported_char_encoding(s)) {
-        scanner_err(s,
+        scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
                     "This could be a file encoding issue. "
                     "Supported file encodings are ASCII and UTF-8.");
         goto fail;
@@ -599,7 +630,9 @@ lhs_tok:
     switch (tok) {
     case TOK_COLON:
         if (production.len <= 0) {
-            scanner_warn(s, "expected at least one keysym on left-hand side; skipping line");
+            scanner_warn(s, XKB_LOG_MESSAGE_NO_ID,
+                         "expected at least one keysym on left-hand side; "
+                         "skipping line");
             goto skip;
         }
         goto rhs;
@@ -626,12 +659,16 @@ lhs_keysym_tok:
     case TOK_LHS_KEYSYM:
         keysym = xkb_keysym_from_name(val.string.str, XKB_KEYSYM_NO_FLAGS);
         if (keysym == XKB_KEY_NoSymbol) {
-            scanner_err(s, "unrecognized keysym \"%s\" on left-hand side",
+            scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                        "unrecognized keysym \"%s\" on left-hand side",
                         val.string.str);
             goto error;
         }
+        check_deprecated_keysyms(scanner_warn, s, s->ctx,
+                                 keysym, val.string.str, val.string.str, "%s", "\n");
         if (production.len + 1 > MAX_LHS_LEN) {
-            scanner_warn(s, "too many keysyms (%d) on left-hand side; skipping line",
+            scanner_warn(s, XKB_LOG_MESSAGE_NO_ID,
+                         "too many keysyms (%d) on left-hand side; skipping line",
                          MAX_LHS_LEN + 1);
             goto skip;
         }
@@ -662,7 +699,8 @@ lhs_mod_list_tok: {
 
         mod = resolve_modifier(val.string.str);
         if (mod == XKB_MOD_INVALID) {
-            scanner_err(s, "unrecognized modifier \"%s\"",
+            scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                        "unrecognized modifier \"%s\"",
                         val.string.str);
             goto error;
         }
@@ -680,17 +718,23 @@ rhs:
     switch (tok = lex(s, &val)) {
     case TOK_STRING:
         if (production.has_string) {
-            scanner_warn(s, "right-hand side can have at most one string; skipping line");
+            scanner_warn(s, XKB_LOG_MESSAGE_NO_ID,
+                         "right-hand side can have at most one string; "
+                         "skipping line");
             goto skip;
         }
         if (val.string.len <= 0) {
-            scanner_warn(s, "right-hand side string must not be empty; skipping line");
+            scanner_warn(s, XKB_LOG_MESSAGE_NO_ID,
+                         "right-hand side string must not be empty; "
+                         "skipping line");
             goto skip;
         }
         if (val.string.len > sizeof(production.string)) {
-            scanner_warn(s,
-                         "right-hand side string is too long: expected max: %d, got: %d; "
-                         "skipping line", (int)sizeof(production.string) - 1, (int)val.string.len);
+            scanner_warn(s, XKB_LOG_MESSAGE_NO_ID,
+                         "right-hand side string is too long: "
+                         "expected max: %d, got: %d; skipping line",
+                         (int)sizeof(production.string) - 1,
+                         (int)val.string.len);
             goto skip;
         }
         strcpy(production.string, val.string.str);
@@ -699,12 +743,17 @@ rhs:
     case TOK_IDENT:
         keysym = xkb_keysym_from_name(val.string.str, XKB_KEYSYM_NO_FLAGS);
         if (keysym == XKB_KEY_NoSymbol) {
-            scanner_err(s, "unrecognized keysym \"%s\" on right-hand side",
+            scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                        "unrecognized keysym \"%s\" on right-hand side",
                         val.string.str);
             goto error;
         }
+        check_deprecated_keysyms(scanner_warn, s, s->ctx,
+                                 keysym, val.string.str, val.string.str, "%s", "\n");
         if (production.has_keysym) {
-            scanner_warn(s, "right-hand side can have at most one keysym; skipping line");
+            scanner_warn(s, XKB_LOG_MESSAGE_NO_ID,
+                         "right-hand side can have at most one keysym; "
+                         "skipping line");
             goto skip;
         }
         production.keysym = keysym;
@@ -712,7 +761,9 @@ rhs:
         /* fallthrough */
     case TOK_END_OF_LINE:
         if (!production.has_string && !production.has_keysym) {
-            scanner_warn(s, "right-hand side must have at least one of string or keysym; skipping line");
+            scanner_warn(s, XKB_LOG_MESSAGE_NO_ID,
+                         "right-hand side must have at least one of string "
+                         "or keysym; skipping line");
             goto skip;
         }
         add_production(table, s, &production);
@@ -723,17 +774,20 @@ rhs:
 
 unexpected:
     if (tok != TOK_ERROR)
-        scanner_err(s, "unexpected token");
+        scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                    "unexpected token");
 error:
     num_errors++;
     if (num_errors <= MAX_ERRORS)
         goto skip;
 
-    scanner_err(s, "too many errors");
+    scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                "too many errors");
     goto fail;
 
 fail:
-    scanner_err(s, "failed to parse file");
+    scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                "failed to parse file");
     return false;
 
 skip:
@@ -768,8 +822,7 @@ parse_file(struct xkb_compose_table *table, FILE *file, const char *file_name)
 
     ok = map_file(file, &string, &size);
     if (!ok) {
-        log_err(table->ctx,
-                XKB_LOG_MESSAGE_NO_ID,
+        log_err(table->ctx, XKB_LOG_MESSAGE_NO_ID,
                 "Couldn't read Compose file %s: %s\n",
                 file_name, strerror(errno));
         return false;

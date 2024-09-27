@@ -6,6 +6,35 @@
 
 #include <stdint.h>
 
+/*
+ * Macro sorcery: PREPEND_MESSAGE_ID enables the log functions to format messages
+ * with the message ID only if the ID is not 0 (XKB_LOG_MESSAGE_NO_ID).
+ * This avoid checking the ID value at run time.
+ *
+ * The trick resides in CHECK_ID:
+ * • CHECK_ID(0) expands to:
+ *   ‣ SECOND(MATCH0, WITH_ID, unused)
+ *   ‣ SECOND(unused,WITHOUT_ID, WITH_ID, unused)
+ *   ‣ WITHOUT_ID
+ * • CHECK_ID(123) expands to:
+ *   ‣ SECOND(MATCH123, WITH_ID, unused)
+ *   ‣ WITH_ID
+*/
+#define EXPAND(...)              __VA_ARGS__ /* needed for MSVC compatibility */
+
+#define JOIN_EXPAND(a, b)        a##b
+#define JOIN(a, b)               JOIN_EXPAND(a, b)
+
+#define SECOND_EXPAND(a, b, ...) b
+#define SECOND(...)              EXPAND(SECOND_EXPAND(__VA_ARGS__))
+
+#define MATCH0                   unused,WITHOUT_ID
+#define CHECK_ID(value)          SECOND(JOIN(MATCH, value), WITH_ID, unused)
+
+#define FORMAT_MESSAGE_WITHOUT_ID(id, fmt) fmt
+#define FORMAT_MESSAGE_WITH_ID(id, fmt)    "[XKB-%03d] " fmt, id
+#define PREPEND_MESSAGE_ID(id, fmt) JOIN(FORMAT_MESSAGE_, CHECK_ID(id))(id, fmt)
+
 /**
  * Special case when no message identifier is defined.
  */
@@ -34,6 +63,8 @@ enum xkb_message_code {
     XKB_ERROR_INSUFFICIENT_BUFFER_SIZE = 134,
     /** The type of the statement is not allowed in the context */
     XKB_ERROR_WRONG_STATEMENT_TYPE = 150,
+    /** The given path is invalid */
+    XKB_ERROR_INVALID_PATH = 161,
     /** Geometry sections are not supported */
     XKB_WARNING_UNSUPPORTED_GEOMETRY_SECTION = 172,
     /** Warn if no key type can be inferred */
@@ -56,6 +87,10 @@ enum xkb_message_code {
     XKB_WARNING_CONFLICTING_KEY_TYPE_MAP_ENTRY = 266,
     /** Warn if using an undefined key type */
     XKB_WARNING_UNDEFINED_KEY_TYPE = 286,
+    /** A keysym has been deprecated: consider using an alternative keysym */
+    XKB_WARNING_DEPRECATED_KEYSYM = 301,
+    /** A keysym name has been deprecated: use the corresponding canonical name instead */
+    XKB_WARNING_DEPRECATED_KEYSYM_NAME = 302,
     /** Warn if a group name was defined for group other than the first one */
     XKB_WARNING_NON_BASE_GROUP_NAME = 305,
     /** Warn when a shift level is not supported */
@@ -88,6 +123,8 @@ enum xkb_message_code {
     XKB_ERROR_ALLOCATION_ERROR = 550,
     /** Warn when a field has not the expected type */
     XKB_ERROR_WRONG_FIELD_TYPE = 578,
+    /** Cannot resolve a given (Rules, Model, Layout, Variant, Options) configuration */
+    XKB_ERROR_CANNOT_RESOLVE_RMLVO = 595,
     /** Invalid _real_ modifier */
     XKB_ERROR_INVALID_REAL_MODIFIER = 623,
     /** Warn on unknown escape sequence in string literal */
@@ -110,6 +147,8 @@ enum xkb_message_code {
     XKB_WARNING_CONFLICTING_MODMAP = 800,
     /** A field is unknown and will be ignored */
     XKB_ERROR_UNKNOWN_FIELD = 812,
+    /** Keymap compilation failed */
+    XKB_ERROR_KEYMAP_COMPILATION_FAILED = 822,
     /** Warn if there are conflicting actions while merging keys */
     XKB_WARNING_CONFLICTING_KEY_ACTION = 883,
     /** Warn if there are conflicting key types while merging groups */

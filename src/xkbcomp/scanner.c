@@ -102,16 +102,16 @@ skip_more_whitespace_and_comments:
                 else if (scanner_oct(s, &o) && is_valid_char((char) o))
                     scanner_buf_append(s, (char) o);
                 else if (s->pos > start_pos)
-                    scanner_warn_with_code(s,
-                        XKB_WARNING_INVALID_ESCAPE_SEQUENCE,
-                        "invalid octal escape sequence (%.*s) in string literal",
-                        (int) (s->pos - start_pos + 1), &s->s[start_pos - 1]);
+                    scanner_warn(s, XKB_WARNING_INVALID_ESCAPE_SEQUENCE,
+                                 "invalid octal escape sequence (%.*s) "
+                                 "in string literal",
+                                 (int) (s->pos - start_pos + 1),
+                                 &s->s[start_pos - 1]);
                     /* Ignore. */
                 else {
-                    scanner_warn_with_code(s,
-                        XKB_WARNING_UNKNOWN_CHAR_ESCAPE_SEQUENCE,
-                        "unknown escape sequence (\\%c) in string literal",
-                        scanner_peek(s));
+                    scanner_warn(s, XKB_WARNING_UNKNOWN_CHAR_ESCAPE_SEQUENCE,
+                                 "unknown escape sequence (\\%c) in string literal",
+                                 scanner_peek(s));
                     /* Ignore. */
                 }
             } else {
@@ -119,7 +119,8 @@ skip_more_whitespace_and_comments:
             }
         }
         if (!scanner_buf_append(s, '\0') || !scanner_chr(s, '\"')) {
-            scanner_err(s, "unterminated string literal");
+            scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                        "unterminated string literal");
             return ERROR_TOK;
         }
         yylval->str = strdup(s->buf);
@@ -133,7 +134,8 @@ skip_more_whitespace_and_comments:
         while (is_graph(scanner_peek(s)) && scanner_peek(s) != '>')
             scanner_buf_append(s, scanner_next(s));
         if (!scanner_buf_append(s, '\0') || !scanner_chr(s, '>')) {
-            scanner_err(s, "unterminated key name literal");
+            scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                        "unterminated key name literal");
             return ERROR_TOK;
         }
         /* Empty key name literals are allowed. */
@@ -165,7 +167,8 @@ skip_more_whitespace_and_comments:
         while (is_alnum(scanner_peek(s)) || scanner_peek(s) == '_')
             scanner_buf_append(s, scanner_next(s));
         if (!scanner_buf_append(s, '\0')) {
-            scanner_err(s, "identifier too long");
+            scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                        "identifier too long");
             return ERROR_TOK;
         }
 
@@ -182,14 +185,15 @@ skip_more_whitespace_and_comments:
     /* Number literal (hexadecimal / decimal / float). */
     if (number(s, &yylval->num, &tok)) {
         if (tok == ERROR_TOK) {
-            scanner_err_with_code(s, XKB_ERROR_MALFORMED_NUMBER_LITERAL,
-                                  "malformed number literal");
+            scanner_err(s, XKB_ERROR_MALFORMED_NUMBER_LITERAL,
+                        "malformed number literal");
             return ERROR_TOK;
         }
         return tok;
     }
 
-    scanner_err(s, "unrecognized token");
+    scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                "unrecognized token");
     return ERROR_TOK;
 }
 
@@ -204,12 +208,12 @@ XkbParseString(struct xkb_context *ctx, const char *string, size_t len,
        The first character relevant to the grammar must be ASCII:
        whitespace, section, comment */
     if (!scanner_check_supported_char_encoding(&scanner)) {
-        scanner_err(&scanner,
-            "This could be a file encoding issue. "
-            "Supported encodings must be backward compatible with ASCII.");
-        scanner_err(&scanner,
-            "E.g. ISO/CEI 8859 and UTF-8 are supported "
-            "but UTF-16, UTF-32 and CP1026 are not.");
+        scanner_err(&scanner, XKB_LOG_MESSAGE_NO_ID,
+                    "This could be a file encoding issue. "
+                    "Supported encodings must be backward compatible with ASCII.");
+        scanner_err(&scanner, XKB_LOG_MESSAGE_NO_ID,
+                    "E.g. ISO/CEI 8859 and UTF-8 are supported "
+                    "but UTF-16, UTF-32 and CP1026 are not.");
         return NULL;
     }
 
