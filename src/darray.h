@@ -83,6 +83,7 @@ typedef darray (unsigned long)  darray_ulong;
 /*** Access ***/
 
 #define darray_item(arr, i)     ((arr).item[i])
+#define darray_items(arr)       ((arr).item)
 #define darray_size(arr)        ((arr).size)
 #define darray_empty(arr)       ((arr).size == 0)
 
@@ -207,7 +208,7 @@ darray_next_alloc(unsigned alloc, unsigned need, unsigned itemSize)
          (idx)++, (val)++)
 
 #define darray_enumerate_from(idx, val, arr, from) \
-    for ((idx) = (from), (val) = &(arr).item[0]; \
+    for ((idx) = (from), (val) = &(arr).item[from]; \
          (idx) < (arr).size; \
          (idx)++, (val)++)
 
