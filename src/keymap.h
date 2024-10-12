@@ -316,19 +316,42 @@ enum xkb_explicit_components {
 };
 
 struct xkb_level {
-    union xkb_action action;
+    /* Count of keysyms/actions */
     unsigned int num_syms;
+    /* Keysyms */
     union {
-        xkb_keysym_t sym;       /* num_syms == 1 */
-        xkb_keysym_t *syms;     /* num_syms > 1  */
-    } u;
+        xkb_keysym_t sym;          /* num_syms == 1 */
+        xkb_keysym_t *syms;        /* num_syms > 1  */
+    } s;
+    /* Actions */
+    union {
+        union xkb_action action;   /* num_syms == 1 */
+        union xkb_action *actions; /* num_syms >  1 */
+    } a;
 };
 
+/**
+ * Group in a key
+ */
 struct xkb_group {
-    bool explicit_type;
-    /* Points to a type in keymap->types. */
+    /**
+     * Flag that indicates whether a group has explicit actions. In case it has,
+     * compatibility interpretations will not be used on it.
+     * See also EXPLICIT_INTERP flag at key level.
+     */
+    bool explicit_actions:1;
+    /**
+     * Flag that indicates whether a group has an explicit key type. In case it
+     * has, type detection will not be used on it.
+     */
+    bool explicit_type:1;
+    /**
+     * Key type of the group. Points to an entry in keymap->types.
+     */
     const struct xkb_key_type *type;
-    /* Use XkbKeyNumLevels for the number of levels. */
+    /**
+     * Array of group levels. Use `XkbKeyNumLevels` for the number of levels.
+     */
     struct xkb_level *levels;
 };
 
@@ -387,7 +410,9 @@ struct xkb_keymap {
 
     struct xkb_mod_set mods;
 
-    /* Number of groups in the key with the most groups. */
+    /* This field has 2 uses:
+     * • During parsing: Expected layouts count after RMLVO resolution, if any;
+     * • After parsing: Number of groups in the key with the most groups. */
     xkb_layout_index_t num_groups;
     /* Not all groups must have names. */
     xkb_layout_index_t num_group_names;
@@ -473,6 +498,9 @@ XkbModNameToIndex(const struct xkb_mod_set *mods, xkb_atom_t name,
 bool
 XkbLevelsSameSyms(const struct xkb_level *a, const struct xkb_level *b);
 
+bool
+XkbLevelHasNoAction(const struct xkb_level *level);
+
 xkb_layout_index_t
 XkbWrapGroupIntoRange(int32_t group,
                       xkb_layout_index_t num_groups,
@@ -481,6 +509,13 @@ XkbWrapGroupIntoRange(int32_t group,
 
 xkb_mod_mask_t
 mod_mask_get_effective(struct xkb_keymap *keymap, xkb_mod_mask_t mods);
+
+unsigned int
+xkb_keymap_key_get_actions_by_level(struct xkb_keymap *keymap,
+                                    xkb_keycode_t kc,
+                                    xkb_layout_index_t layout,
+                                    xkb_level_index_t level,
+                                    const union xkb_action **actions);
 
 struct xkb_keymap_format_ops {
     bool (*keymap_new_from_names)(struct xkb_keymap *keymap,

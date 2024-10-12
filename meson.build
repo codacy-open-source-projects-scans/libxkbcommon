@@ -549,7 +549,7 @@ if build_tools
                 install: false)
     endif
 
-    # Tool: interactive-x11
+    # Tools: interactive-x11
     if get_option('enable-x11')
         x11_tools_dep = declare_dependency(
             link_with: libxkbcommon_x11,
@@ -566,9 +566,18 @@ if build_tools
                    install_dir: dir_libexec)
         install_man('tools/xkbcli-interactive-x11.1')
         configh_data.set10('HAVE_XKBCLI_INTERACTIVE_X11', true)
+
+        executable('xkbcli-dump-keymap-x11',
+                   'tools/interactive-x11.c',
+                   dependencies: x11_tools_dep,
+                   c_args: ['-DKEYMAP_DUMP'],
+                   install: true,
+                   install_dir: dir_libexec)
+        install_man('tools/xkbcli-dump-keymap-x11.1')
+        configh_data.set10('HAVE_XKBCLI_DUMP_KEYMAP_X11', true)
     endif
 
-    # Tool: interactive-wayland
+    # Tools: interactive-wayland
     if get_option('enable-wayland')
         wayland_client_dep = dependency('wayland-client', version: '>=1.2.0', required: false)
         wayland_protocols_dep = dependency('wayland-protocols', version: '>=1.12', required: false)
@@ -603,6 +612,16 @@ You can disable the Wayland xkbcli programs with -Denable-wayland=false.''')
                    install_dir: dir_libexec)
         install_man('tools/xkbcli-interactive-wayland.1')
         configh_data.set10('HAVE_XKBCLI_INTERACTIVE_WAYLAND', true)
+
+        executable('xkbcli-dump-keymap-wayland',
+                   'tools/interactive-wayland.c',
+                   xdg_shell_sources,
+                   dependencies: [tools_dep, wayland_client_dep],
+                   c_args: ['-DKEYMAP_DUMP'],
+                   install: true,
+                   install_dir: dir_libexec)
+        install_man('tools/xkbcli-dump-keymap-wayland.1')
+        configh_data.set10('HAVE_XKBCLI_DUMP_KEYMAP_WAYLAND', true)
     endif
 
     # Tool: list
@@ -738,7 +757,13 @@ test(
 )
 test(
     'stringcomp',
-    executable('test-stringcomp', 'test/stringcomp.c', dependencies: test_dep),
+    executable(
+        'test-stringcomp',
+        'test/stringcomp.c',
+        'test/utils-text.c',
+        'test/utils-text.h',
+        dependencies: test_dep
+    ),
     env: test_env,
 )
 test(
@@ -787,10 +812,10 @@ test(
     executable(
         'test-compose',
         'test/compose.c',
-        'test/shuffle-lines.c',
-        'test/shuffle-lines.h',
         'test/compose-iter.c',
         'test/compose-iter.h',
+        'test/utils-text.c',
+        'test/utils-text.h',
         'src/compose/dump.c',
         'src/compose/dump.h',
         'src/compose/escape.h',
@@ -800,7 +825,13 @@ test(
 )
 test(
     'utils',
-    executable('test-utils', 'test/utils.c', dependencies: test_dep),
+    executable(
+        'test-utils',
+        'test/utils.c',
+        'test/utils-text.c',
+        'test/utils-text.h',
+        dependencies: test_dep
+    ),
     env: test_env,
 )
 test(
