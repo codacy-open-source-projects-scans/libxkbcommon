@@ -1,28 +1,11 @@
 /*
  * Copyright © 2024 Pierre Le Marre <dev@wismill.eu>
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "config.h"
 
+#include "utils.h"
 #include "utf8-decoding.h"
 
 /* Array mapping the leading byte to the length of a UTF-8 sequence.
@@ -91,7 +74,7 @@ utf8_next_code_point(const char *s, size_t max_size, size_t *size_out)
     }
 
     /* Check surrogates */
-    if (cp >= 0xd800 && cp <= 0xdfff)
+    if (is_surrogate(cp))
         return INVALID_UTF8_CODE_POINT;
 
     *size_out = len;

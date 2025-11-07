@@ -1,24 +1,6 @@
 /*
  * Copyright © 2024 Pierre Le Marre <dev@wismill.eu>
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "config.h"
@@ -60,7 +42,7 @@ strip_lines(const char *input, size_t input_length, const char *prefix)
         }
 
         /* Append string */
-        darray_append_items(buf, start, count);
+        darray_append_items(buf, start, (darray_size_t) count);
 
         /* Find end of line */
         if (next >= end) {
@@ -82,11 +64,11 @@ strip_lines(const char *input, size_t input_length, const char *prefix)
     /* Append remaining */
     if (start < end) {
         count = (size_t)(end - start);
-        darray_append_items(buf, start, count);
+        darray_append_items(buf, start, (darray_size_t) count);
     }
 
     darray_append(buf, '\0');
-    return buf.item;
+    return darray_items(buf);
 }
 
 char *
@@ -101,7 +83,7 @@ uncomment(const char *input, size_t input_length, const char *prefix)
     size_t count;
     while (start < end && next != NULL) {
         count = (size_t)(next - start);
-        darray_append_items(buf, start, count);
+        darray_append_items(buf, start, (darray_size_t) count);
 
         /* Skip prefix */
         start += count + prefix_len;
@@ -118,11 +100,11 @@ uncomment(const char *input, size_t input_length, const char *prefix)
     /* Append remaining */
     if (start < end) {
         count = (size_t)(end - start);
-        darray_append_items(buf, start, count);
+        darray_append_items(buf, start, (darray_size_t) count);
     }
 
     darray_append(buf, '\0');
-    return buf.item;
+    return darray_items(buf);
 }
 
 /* Split string into lines */
@@ -165,6 +147,7 @@ concat_lines(struct text_line *lines, size_t length,
         memcpy(out, lines[i].start, lines[i].length);
         out += lines[i].length;
     }
+    *out = '\0';
     return (size_t)(out - output);
 }
 
@@ -185,7 +168,7 @@ shuffle_lines(struct text_line *lines, size_t length, char *output)
          */
         for (size_t i = length - 1; i > 0; i--) {
             /* Swap current line with random line before it */
-            size_t j = (size_t)(rand() % (i+1));
+            size_t j = rand() % (i+1);
             struct text_line tmp = lines[j];
             lines[j] = lines[i];
             lines[i] = tmp;

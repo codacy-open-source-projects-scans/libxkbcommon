@@ -53,10 +53,11 @@ of the following fields (called [RMLVO] for short):
 [option]: @ref config-options-def
 [options]: @ref config-options-def
 
-Format of the file
-------------------
+# Format of the file
+
+## Rules and rule sets {#rule-def}
+
 @anchor rule-set-def
-@anchor rule-def
 The file consists of **rule sets**, each consisting of **rules** (one
 per line), which match the [MLVO] values on the left hand side, and,
 if the values match to the values the user passed in, results in the
@@ -85,7 +86,8 @@ resulting [KcCGST]. See @ref rmlvo-resolution for further details.
   fr        caps:digits_row = +capslock(digits_row)
 ```
 
-@anchor rules-group-def
+## Groups {#rules-group-def}
+
 Since some values are related and repeated often, it is possible
 to *group* them together and refer to them by a **group name** in the
 rules.
@@ -105,13 +107,51 @@ rules.
  $azerty    caps:digits_row = +capslock(digits_row)
 ```
 
-@anchor rules-wildcard-def
+## Wild cards {#rules-wildcard-def}
+
 Along with matching values by simple string equality and for
 membership in a [group] defined previously, rules may also contain
-**wildcard** values “\*” with the following behavior:
+**wild card** values with the following behavior:
+
+<dl>
+<dt>* @anchor rules-wildcard-legacy-def</dt>
+<dd>
+
+Legacy wild card:
 - For `model` and `options`: *always* match.
 - For `layout` and `variant`: match any *non-empty* value.
-These usually appear near the end of a rule set to set *default* values.
+
+This wild card usually appears near the end of a rule set to set *default* values.
+
+@note Prefer using the wild cards @ref rules-wildcard-some-def "\<some\>" or
+@ref rules-wildcard-any-def "\<any\>" for their simpler semantics, as it does not
+depend on the context.
+</dd>
+<dt>\<none\> @anchor rules-wildcard-none-def</dt>
+<dd>
+
+Match *empty* values
+
+@since 1.9.0
+</dd>
+<dt>\<some\> @anchor rules-wildcard-some-def</dt>
+<dd>
+
+Match *non-empty* value
+
+@since 1.9.0
+</dd>
+<dt>\<any\> @anchor rules-wildcard-any-def</dt>
+<dd>
+
+Match *any* (optionally empty) value. Its behavior does not depend on the
+context, contrary to the legacy wild card @ref rules-wildcard-legacy-def "*".
+
+This wild card usually appears near the end of a rule set to set *default* values.
+
+@since 1.9.0
+</dd>
+</dl>
 
 ```c
 ! layout = keycodes
@@ -123,8 +163,8 @@ These usually appear near the end of a rule set to set *default* values.
   *      = +aliases(qwerty)
 ```
 
-Grammar
--------
+# Grammar
+
 It is advised to look at a file like `rules/evdev` along with
 this grammar.
 
@@ -149,7 +189,7 @@ SpecialIndex ::= "single" | "first" | "later" | "any"
 Kccgst       ::= "keycodes" | "symbols" | "types" | "compat" | "geometry"
 
 Rule         ::= { MlvoValue } "=" { KccgstValue } "\n"
-MlvoValue    ::= "*" | GroupName | <ident>
+MlvoValue    ::= "*" | "<none>" | "<some>" | "<any>" | GroupName | <ident>
 KccgstValue  ::= <ident> [ { Qualifier } ]
 Qualifier    ::= ":" ({ NumericIndex } | "all")
 ```
@@ -161,7 +201,7 @@ or %%H seems to do the job though.
 -->
 @note
 - Include processes the rules in the file path specified in the `ident`,
-  in order. **%-expansion** is performed, as follows:
+  in order. **%-expansion** is performed, as follows: @anchor rules-include-expansion
   <dl>
     <dt>`%%`</dt>
     <dd>A literal %.</dd>
@@ -181,10 +221,10 @@ or %%H seems to do the job though.
   **Note:** This feature is supported by libxkbcommon but not by the legacy X11
   tools.
 
-- @anchor rules-special-indexes
+- @anchor rules-extended-layout-indices
   (Since version `1.8.0`)
-  The following *special indexes* can be used to avoid repetition and clarify
-  the semantics:
+  The following *extended layout indices* can be used to avoid repetition and
+  clarify the semantics:
 
   <dl>
     <dt>`single`</dt>
@@ -240,9 +280,9 @@ or %%H seems to do the job though.
         `%+v`, `%+v[1]`, `%+v[2]`, …
     </dt>
     <dd>
-        As above, but prefixed with ‘+’. Similarly, ‘|’, ‘-’, ‘_’ may be
+        As above, but prefixed with ‘+’. Similarly, ‘|’, ‘^’, ‘-’, ‘_’ may be
         used instead of ‘+’. See the [merge mode] documentation for the
-        special meaning of ‘+’ and ‘|’.
+        special meaning of ‘+’, ‘|’ and ‘^’.
     </dd>
     <dt>
         `%(m)`,
@@ -260,9 +300,13 @@ or %%H seems to do the job though.
         etc.
     </dt>
     <dd>
-        (Since version `1.8.0`)
-        In case the mapping uses a @ref rules-special-indexes "special index",
+        In case the mapping uses an @ref rules-extended-layout-indices "extended layout index",
         `%%i` corresponds to the index of the matched layout.
+
+        ℹ️ Notes:
+        - Added in version `1.8.0`
+        - Since `1.11.0`: This feature can only be used if the rule header has
+          a `layout` or `variant` [MLVO] field.
     </dd>
   </dl>
 
@@ -327,15 +371,60 @@ or %%H seems to do the job though.
     </tr>
   </table>
 
-RMLVO resolution process {#rmlvo-resolution}
-------------------------
+# RMLVO resolution process {#rmlvo-resolution}
 
-First of all, the rules *file* is extracted from the provided
-[<em>R</em>MLVO][RMLVO] configuration (usually `evdev`). Then its path
-is resolved and the file is parsed to get the [rule sets].
+## Process
+
+First of all, the main rules *file* `<ruleset>` is extracted from the provided
+[<em>R</em>MLVO][RMLVO] configuration (usually `evdev`). Then the following
+files are parsed and their results are collected sequentially to form the final
+[rule sets][]:
+
+<dl>
+<dt>Partial `<ruleset>.pre` files</dt>
+<dd>
+*Optional:* for each include path `<ipath>`, parse and append the [rule sets]
+of the file `<ipath>/rules/<ruleset>.pre`, if it exists. Multiple such files may
+be parsed enabling lightweight composition fo rules files.
+
+@since 1.13.0
+</dd>
+<dt>Main `<ruleset>` file</dt>
+<dd>
+Parse and append the [rule sets] of the *canonical* `<ruleset>` file, e.g. the
+*first* file in the included paths matching `rules/<ruleset>`.
+</dd>
+<dt>Partial `<ruleset>.post` files</dt>
+<dd>
+*Optional:* for each include path `<ipath>`, parse and append the [rule sets]
+of the file `<ipath>/rules/<ruleset>.post`, if it exists. Multiple such files
+may be parsed enabling lightweight composition fo rules files.
+
+@since 1.13.0
+</dd>
+</dl>
+
+The resulting rule sets are equivalent to:
+
+```
+! include <include path 1>/rules/<ruleset>.pre  // only if defined
+…
+! include <include path n>/rules/<ruleset>.pre  // only if defined
+
+! include <ruleset>                             // main rules file
+
+! include <include path 1>/rules/<ruleset>.post // only if defined
+…
+! include <include path n>/rules/<ruleset>.post // only if defined
+```
 
 Then *each rule set* is checked against the provided [MLVO] configuration,
-following their *order* in the rules file.
+following their *order* in the rules files.
+
+@important @anchor irrelevant-options-order Contrary to layouts and variants,
+the *options order* in a [MLVO] configuration (e.g. via `xkbcli`) is irrelevant
+for its resolution: only the order of the rules matters. See
+“@ref rules-options-example ""” for an illustration.
 
 If a [rule] matches in a @ref rule-set-def "rule set", then:
 
@@ -349,7 +438,8 @@ inside lists.
     The *KcCGST* value of the rule is used to update the [KcCGST]
     configuration, using the following instructions. Note that `foo`
     and `bar` are placeholders; ‘+’ specifies the *override* [merge mode]
-    and can be replaced by ‘|’ to specify the *augment* merge mode instead.
+    and can be replaced by ‘|’ or ‘^’ to specify respectively the *augment*
+    or *replace* merge mode instead.
 
     | Rule value        | Old KcCGST value | New KcCGST value      |
     | ----------------- | ---------------- | --------------------- |
@@ -370,6 +460,8 @@ inside lists.
 
 [value update]: @ref rules-kccgst-value-update
 [merge mode]: @ref merge-mode-def
+
+## Examples
 
 ### Example: key codes
 
@@ -457,7 +549,7 @@ Using the following example:
 
 ! layout[2] = symbols
   *         = +%l[2]%(v[2])
-// Repeat the previous rules set with indexes 3 and 4
+// Repeat the previous rules set with indices 3 and 4
 
 ! layout     option          = symbols
  $azerty     caps:digits_row = +capslock(digits_row)
@@ -468,7 +560,7 @@ Using the following example:
  $azerty     caps:digits_row = +capslock(digits_row):1
   *          misc:typo       = +typo(base):1
   *          lv3:ralt_alt    = +level3(ralt_alt):1
-// Repeat the previous rules set for indexes 2 to 4
+// Repeat the previous rules set for indices 2 to 4
 ```
 
 we would have the following resolutions of <em>[symbols]</em>:
@@ -510,3 +602,38 @@ Since version `1.8.0`, the previous code can be replaced with simply:
   *            misc:typo    = +typo(base):%i
   *            lv3:ralt_alt = +level3(ralt_alt):%i
 ```
+
+### Example: layout-specific options {#rules-layout-specific-options-example}
+
+Using the following example:
+
+```c
+! layout[first] = symbols
+  *             = pc
+
+! layout[any] = symbols
+  *           = %l[%i]%(v[%i])
+
+// Not layout-specific
+! option      = symbols
+  opt1        = +opt1
+
+// Layout-specific: note the range `[any]` and the `:%i` specifier
+! layout[any]   option     = symbols
+  *             opt2       = +opt2:%i
+```
+
+we would have the following resolutions of <em>[symbols]</em>:
+
+| Layout  | Option    | Symbols                    | Comment                                |
+| ------- | --------- | -------------------------- | -------------------------------------- |
+| `be,gb` | `opt1`    | `pc+be+gb:2+opt1`          | Matched: no layout index               |
+| `be,gb` | `opt1!1`  | `pc+be+gb:2`               | No match: not a layout-specific option |
+| `be,gb` | `opt1!2`  | `pc+be+gb:2`               | No match: not a layout-specific option |
+| `be,gb` | `opt2`    | `pc+be+gb:2+opt2:1+opt2:2` | Matched: all layouts                   |
+| `be,gb` | `opt2!1`  | `pc+be+gb:2+opt2:1`        | Matched: only specified layout         |
+| `be,gb` | `opt2!2`  | `pc+be+gb:2+opt2:2`        | Matched: only specified layout         |
+
+@note Such option should use the attribute `layout-specific="true"` in the
+corresponding `configItem` tag of the XML registry file, so that keyboard
+configuration can expose this feature in their user interface.

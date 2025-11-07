@@ -1,7 +1,14 @@
-#ifndef UTILS_PATHS_H
-#define UTILS_PATHS_H
+/*
+ * Copyright © 2024 Pierre Le Marre
+ * SPDX-License-Identifier: MIT
+ */
+#pragma once
+
+#include "config.h"
 
 #include <stdbool.h>
+
+#include "utils.h"
 
 #ifdef _WIN32
 #define PATH_SEPARATOR '\\'
@@ -13,7 +20,5 @@
 #define is_path_separator(s) ((s) == PATH_SEPARATOR)
 #endif
 
-bool
-is_absolute(const char *path);
-
-#endif
+XKB_EXPORT_PRIVATE bool
+is_absolute_path(const char *path);

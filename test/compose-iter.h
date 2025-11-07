@@ -1,5 +1,8 @@
-#ifndef COMPOSE_LEGACY_ITER_H
-#define COMPOSE_LEGACY_ITER_H
+/*
+ * Copyright © 2022 Ran Benita <ran@unusedvar.com>
+ * SPDX-License-Identifier: MIT
+ */
+#pragma once
 
 #include "config.h"
 #include "src/compose/table.h"
@@ -22,5 +25,3 @@ void
 xkb_compose_table_for_each(struct xkb_compose_table *table,
                            xkb_compose_table_iter_t iter,
                            void *data);
-
-#endif

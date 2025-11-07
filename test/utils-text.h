@@ -1,3 +1,12 @@
+/*
+ * Copyright © 2024 Pierre Le Marre <dev@wismill.eu>
+ * SPDX-License-Identifier: MIT
+ */
+#pragma once
+
+#include "config.h"
+
+#include <stddef.h>
 #include <stdint.h>
 
 char *

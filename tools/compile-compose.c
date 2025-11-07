@@ -1,24 +1,6 @@
 /*
  * Copyright © 2021 Ran Benita <ran@unusedvar.com>
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "config.h"
@@ -32,12 +14,13 @@
 #include "xkbcommon/xkbcommon-compose.h"
 #include "src/compose/dump.h"
 #include "src/keysym.h"
+#include "tools/tools-common.h"
 
 static void
 usage(FILE *fp, char *progname)
 {
     fprintf(fp,
-            "Usage: %s [--help] [--file FILE] [--locale LOCALE] [--test]\n",
+            "Usage: %s [--help] [--verbose] [--locale LOCALE] [--test] [FILE]\n",
             progname);
     fprintf(fp,
             "\n"
@@ -46,8 +29,11 @@ usage(FILE *fp, char *progname)
             "Options:\n"
             " --help\n"
             "    Print this help and exit\n"
+            " --verbose\n"
+            "    Enable verbose debugging output\n"
             " --file FILE\n"
-            "    Specify a Compose file to load\n"
+            "    Specify a Compose file to load.\n"
+            "    DEPRECATED: use the positional argument instead.\n"
             " --locale LOCALE\n"
             "    Specify the locale directly, instead of relying on the environment variables\n"
             "    LC_ALL, LC_TYPE and LANG.\n"
@@ -58,23 +44,23 @@ usage(FILE *fp, char *progname)
 int
 main(int argc, char *argv[])
 {
-    int ret = EXIT_FAILURE;
-    struct xkb_context *ctx = NULL;
-    struct xkb_compose_table *compose_table = NULL;
     const char *locale = NULL;
     const char *path = NULL;
     enum xkb_compose_format format = XKB_COMPOSE_FORMAT_TEXT_V1;
+    bool verbose = false;
     bool test = false;
     enum options {
+        OPT_VERBOSE,
         OPT_FILE,
         OPT_LOCALE,
         OPT_TEST,
     };
     static struct option opts[] = {
-        {"help",   no_argument,       0, 'h'},
-        {"file",   required_argument, 0, OPT_FILE},
-        {"locale", required_argument, 0, OPT_LOCALE},
-        {"test",   no_argument,       0, OPT_TEST},
+        {"help",    no_argument,       0, 'h'},
+        {"verbose", no_argument,       0, OPT_VERBOSE},
+        {"file",    required_argument, 0, OPT_FILE},
+        {"locale",  required_argument, 0, OPT_LOCALE},
+        {"test",    no_argument,       0, OPT_TEST},
         {0, 0, 0, 0},
     };
 
@@ -94,8 +80,12 @@ main(int argc, char *argv[])
             break;
 
         switch (opt) {
+        case OPT_VERBOSE:
+            verbose = true;
+            break;
         case OPT_FILE:
             path = optarg;
+            fprintf(stderr, "WARNING: the flag --file is deprecated\n");
             break;
         case OPT_LOCALE:
             locale = optarg;
@@ -106,7 +96,7 @@ main(int argc, char *argv[])
         case 'h':
             usage(stdout, argv[0]);
             return EXIT_SUCCESS;
-        case '?':
+        default:
             usage(stderr, argv[0]);
             return EXIT_INVALID_USAGE;
         }
@@ -118,24 +108,59 @@ main(int argc, char *argv[])
         return EXIT_INVALID_USAGE;
     }
 
-    ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-    if (!ctx) {
-        fprintf(stderr, "Couldn't create xkb context\n");
-        goto out;
+    if (optind < argc && !isempty(argv[optind])) {
+        /* Some positional arguments left: use a file */
+        if (path) {
+            fprintf(stderr,
+                    "ERROR: Path already provided via the flag: --file\n");
+            usage(stderr, argv[0]);
+            exit(EXIT_INVALID_USAGE);
+        }
+        path = argv[optind++];
+        if (optind < argc) {
+            fprintf(stderr, "ERROR: Too many positional arguments\n");
+            usage(stderr, argv[0]);
+            exit(EXIT_INVALID_USAGE);
+        }
+    } else if (is_pipe_or_regular_file(STDIN_FILENO)) {
+        /* No positional argument: detect piping */
+        path = "-";
     }
 
+    struct xkb_context *ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+    if (!ctx) {
+        fprintf(stderr, "ERROR: Couldn't create xkb context\n");
+        return EXIT_FAILURE;
+    }
+
+    if (verbose)
+        tools_enable_verbose_logging(ctx);
+
+    int ret = EXIT_FAILURE;
+    struct xkb_compose_table *compose_table = NULL;
+
     if (path != NULL) {
-        FILE *file = fopen(path, "rb");
+        FILE *file;
+        if (isempty(path) || strcmp(path, "-") == 0) {
+            /* Read from stdin */
+            file = tools_read_stdin();
+        } else {
+            /* Read from regular file */
+            file = fopen(path, "rb");
+        }
+
         if (file == NULL) {
             perror(path);
             goto file_error;
         }
+
         compose_table =
             xkb_compose_table_new_from_file(ctx, file, locale, format,
                                             XKB_COMPOSE_COMPILE_NO_FLAGS);
         fclose(file);
         if (!compose_table) {
-            fprintf(stderr, "Couldn't create compose from file: %s\n", path);
+            fprintf(stderr,
+                    "ERROR: Couldn't create compose from file: %s\n", path);
             goto out;
         }
     } else {
@@ -144,7 +169,8 @@ main(int argc, char *argv[])
                                               XKB_COMPOSE_COMPILE_NO_FLAGS);
         if (!compose_table) {
             fprintf(stderr,
-                    "Couldn't create compose from locale \"%s\"\n", locale);
+                    "ERROR: Couldn't create compose from locale \"%s\"\n",
+                    locale);
             goto out;
         }
     }

@@ -1,57 +1,23 @@
 /*
+ * For MIT-open-group:
  * Copyright 1985, 1987, 1990, 1998  The Open Group
  *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
- * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- *
- * Except as contained in this notice, the names of the authors or their
- * institutions shall not be used in advertising or otherwise to promote the
- * sale, use or other dealings in this Software without prior written
- * authorization from the authors.
- */
-
-/*
+ * For MIT:
  * Copyright © 2009 Dan Nicholson
  *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT-open-group AND MIT
  */
 
 #include "config.h"
 
+#include <assert.h>
+#include <stdint.h>
 #include <stdlib.h>
+
+#include "xkbcommon/xkbcommon-keysyms.h"
 #include "xkbcommon/xkbcommon.h"
 #include "utils.h"
+#include "utils-numbers.h"
 #include "keysym.h"
 #include "ks_tables.h"
 
@@ -85,7 +51,7 @@ find_keysym_index(xkb_keysym_t ks)
     return -1;
 }
 
-#define get_name_by_index(index) keysym_names + index
+#define get_name_by_index(index) (keysym_names + (index))
 
 static inline const char *
 get_name(const struct name_keysym *entry)
@@ -97,11 +63,10 @@ get_name(const struct name_keysym *entry)
 static inline int
 get_unicode_name(xkb_keysym_t ks, char *buffer, size_t size)
 {
-    const int width = (ks & 0xff0000UL) ? 8 : 4;
-    return snprintf(buffer, size, "U%0*lX", width, ks & 0xffffffUL);
+    return snprintf(buffer, size, "U%04"PRIX32, ks & UINT32_C(0xffffff));
 }
 
-XKB_EXPORT int
+int
 xkb_keysym_get_name(xkb_keysym_t ks, char *buffer, size_t size)
 {
     if (ks > XKB_KEYSYM_MAX) {
@@ -113,7 +78,14 @@ xkb_keysym_get_name(xkb_keysym_t ks, char *buffer, size_t size)
     if (index != -1)
         return snprintf(buffer, size, "%s", get_name(&keysym_to_name[index]));
 
-    /* Unnamed Unicode codepoint. */
+    /*
+     * Unnamed Unicode codepoint.
+     * • Keysyms in the range [XKB_KEYSYM_UNICODE_OFFSET, XKB_KEYSYM_UNICODE_MIN [
+     *   do not use the Unicode notation for backward compatibility.
+     * • Keysyms are not normalized: e.g. given a Unicode keysym, calling
+     *   `xkb_utf32_to_keysym` with the corresponding code point may return a
+     *   different keysym or fail (e.g. surrogates are invalid in UTF-32).
+     */
     if (ks >= XKB_KEYSYM_UNICODE_MIN && ks <= XKB_KEYSYM_UNICODE_MAX)
         return get_unicode_name(ks, buffer, size);
 
@@ -126,6 +98,30 @@ xkb_keysym_is_assigned(xkb_keysym_t ks)
 {
     return (XKB_KEYSYM_UNICODE_MIN <= ks && ks <= XKB_KEYSYM_UNICODE_MAX) ||
            find_keysym_index(ks) != -1;
+}
+
+int
+xkb_keysym_get_explicit_names(xkb_keysym_t ks, const char **buffer, size_t size)
+{
+    if (ks > XKB_KEYSYM_MAX)
+        return -1;
+    const ssize_t index = find_keysym_index(ks);
+    if (index < 0)
+        return 0;
+    const uint16_t canonical = keysym_to_name[index].offset;
+    if (size > 0)
+        buffer[0] = get_name(&keysym_to_name[index]);
+    int count = 1;
+    for (size_t pos = 0; pos < ARRAY_SIZE(name_to_keysym); pos++) {
+        if (name_to_keysym[pos].keysym == ks &&
+            name_to_keysym[pos].offset != canonical) {
+            if ((size_t) count < size) {
+                buffer[count] = get_name(&name_to_keysym[pos]);
+            }
+            count++;
+        }
+    }
+    return count;
 }
 
 struct xkb_keysym_iterator {
@@ -147,7 +143,14 @@ xkb_keysym_iterator_new(bool iterate_only_explicit_keysyms)
 struct xkb_keysym_iterator*
 xkb_keysym_iterator_unref(struct xkb_keysym_iterator *iter)
 {
-    free(iter);
+    /*
+     * [NOTE] If we ever make this API public, add:
+     * - an `refcnt` member,
+     * - `xkb_keysym_iterator_ref()`,
+     * - `assert(!iter || iter->refcnt > 0)`.
+     */
+    if (iter)
+        free(iter);
     return NULL;
 }
 
@@ -220,32 +223,17 @@ xkb_keysym_iterator_next(struct xkb_keysym_iterator *iter)
     return true;
 }
 
-/*
- * Parse the numeric part of a 0xXXXX and UXXXX keysym.
- * Not using strtoul -- it's slower and accepts a bunch of stuff
- * we don't want to allow, like signs, spaces, even locale stuff.
- */
+/* Parse the numeric part of a 0xXXXX and UXXXX keysym. */
 static bool
 parse_keysym_hex(const char *s, uint32_t *out)
 {
-    uint32_t result = 0;
-    int i;
-    for (i = 0; i < 8 && s[i] != '\0'; i++) {
-        result <<= 4;
-        if ('0' <= s[i] && s[i] <= '9')
-            result += s[i] - '0';
-        else if ('a' <= s[i] && s[i] <= 'f')
-            result += 10 + s[i] - 'a';
-        else if ('A' <= s[i] && s[i] <= 'F')
-            result += 10 + s[i] - 'A';
-        else
-            return false;
-    }
-    *out = result;
-    return s[i] == '\0' && i > 0;
+    /* We expect a NULL-terminated string of length up to 8 */
+    const int count = parse_hex_to_uint32_t(s, 8, out);
+    /* Check that some value was parsed and we reached the end of the string */
+    return (count > 0 && s[count] == '\0');
 }
 
-XKB_EXPORT xkb_keysym_t
+xkb_keysym_t
 xkb_keysym_from_name(const char *name, enum xkb_keysym_flags flags)
 {
     const struct name_keysym *entry = NULL;
@@ -315,18 +303,30 @@ xkb_keysym_from_name(const char *name, enum xkb_keysym_flags flags)
     }
 
     if (*name == 'U' || (icase && *name == 'u')) {
+        /* Parse Unicode notation */
         if (!parse_keysym_hex(&name[1], &val))
             return XKB_KEY_NoSymbol;
-
-        if (val < 0x20 || (val > 0x7e && val < 0xa0))
-            return XKB_KEY_NoSymbol;
-        if (val < 0x100)
-            return (xkb_keysym_t) val;
-        if (val > 0x10ffff)
-            return XKB_KEY_NoSymbol;
-        return (xkb_keysym_t) val | XKB_KEYSYM_UNICODE_OFFSET;
+        return (val > 0xff && val <= 0x10ffff)
+            /*
+             * No normalization.
+             *
+             * NOTE: It allows surrogates, as we are dealing with Unicode
+             * *code points* here, not Unicode *scalars*.
+             */
+            ? XKB_KEYSYM_UNICODE_OFFSET + val
+            /*
+             * Normalize ISO-8859-1 (Latin-1 + C0 and C1 control code)
+             *
+             * These code points require special processing to ensure
+             * backward compatibility with legacy keysyms.
+             */
+            : xkb_utf32_to_keysym(val);
     }
     else if (name[0] == '0' && (name[1] == 'x' || (icase && name[1] == 'X'))) {
+        /*
+         * Parse numeric hexadecimal notation without any normalization, in
+         * in order to be consistent with the keymap files parsing.
+         */
         if (!parse_keysym_hex(&name[2], &val) || val > XKB_KEYSYM_MAX)
             return XKB_KEY_NoSymbol;
         return (xkb_keysym_t) val;
@@ -388,6 +388,19 @@ xkb_keysym_is_deprecated(xkb_keysym_t keysym,
                 /* All names are deprecated */
                 *reference_name = NULL;
                 return true;
+            } else if (deprecated_keysyms[mid].offset == UNICODE_KEYSYM) {
+                /* All names are deprecated, but Unicode notation is valid */
+                *reference_name = NULL;
+                if (name == NULL)
+                    return false;
+                if (name[0] != 'U')
+                    return true;
+                /* Since the current function is internal, assume the name
+                 * corresponds to the keysym value and just check its syntax. */
+                const char *start = name + 1;
+                while (is_xdigit(*start))
+                    start++;
+                return *start != '\0' && start > name + 1;
             }
             /* There is a reference name that is not deprecated */
             *reference_name = get_name_by_index(deprecated_keysyms[mid].offset);

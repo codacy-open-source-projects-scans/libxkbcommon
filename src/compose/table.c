@@ -1,33 +1,19 @@
 /*
  * Copyright © 2013,2021 Ran Benita <ran234@gmail.com>
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "config.h"
 
+#include <assert.h>
+
+#include "xkbcommon/xkbcommon.h"
+#include "messages-codes.h"
 #include "utils.h"
+#include "constants.h"
 #include "table.h"
 #include "parser.h"
 #include "paths.h"
-#include "xkbcommon/xkbcommon.h"
 
 static struct xkb_compose_table *
 xkb_compose_table_new(struct xkb_context *ctx,
@@ -70,16 +56,18 @@ xkb_compose_table_new(struct xkb_context *ctx,
     return table;
 }
 
-XKB_EXPORT struct xkb_compose_table *
+struct xkb_compose_table *
 xkb_compose_table_ref(struct xkb_compose_table *table)
 {
+    assert(table->refcnt > 0);
     table->refcnt++;
     return table;
 }
 
-XKB_EXPORT void
+void
 xkb_compose_table_unref(struct xkb_compose_table *table)
 {
+    assert(!table || table->refcnt > 0);
     if (!table || --table->refcnt > 0)
         return;
     free(table->locale);
@@ -89,7 +77,7 @@ xkb_compose_table_unref(struct xkb_compose_table *table)
     free(table);
 }
 
-XKB_EXPORT struct xkb_compose_table *
+struct xkb_compose_table *
 xkb_compose_table_new_from_file(struct xkb_context *ctx,
                                 FILE *file,
                                 const char *locale,
@@ -124,7 +112,7 @@ xkb_compose_table_new_from_file(struct xkb_context *ctx,
     return table;
 }
 
-XKB_EXPORT struct xkb_compose_table *
+struct xkb_compose_table *
 xkb_compose_table_new_from_buffer(struct xkb_context *ctx,
                                   const char *buffer, size_t length,
                                   const char *locale,
@@ -159,7 +147,7 @@ xkb_compose_table_new_from_buffer(struct xkb_context *ctx,
     return table;
 }
 
-XKB_EXPORT struct xkb_compose_table *
+struct xkb_compose_table *
 xkb_compose_table_new_from_locale(struct xkb_context *ctx,
                                   const char *locale,
                                   enum xkb_compose_compile_flags flags)
@@ -204,7 +192,7 @@ xkb_compose_table_new_from_locale(struct xkb_context *ctx,
         goto found_path;
     free(path);
 
-    log_err(ctx, XKB_LOG_MESSAGE_NO_ID,
+    log_err(ctx, XKB_ERROR_INVALID_COMPOSE_LOCALE,
             "couldn't find a Compose file for locale \"%s\" (mapped to \"%s\")\n",
             locale, table->locale);
     xkb_compose_table_unref(table);
@@ -227,7 +215,7 @@ found_path:
     return table;
 }
 
-XKB_EXPORT const xkb_keysym_t *
+const xkb_keysym_t *
 xkb_compose_table_entry_sequence(struct xkb_compose_table_entry *entry,
                                  size_t *sequence_length)
 {
@@ -235,13 +223,13 @@ xkb_compose_table_entry_sequence(struct xkb_compose_table_entry *entry,
     return entry->sequence;
 }
 
-XKB_EXPORT xkb_keysym_t
+xkb_keysym_t
 xkb_compose_table_entry_keysym(struct xkb_compose_table_entry *entry)
 {
     return entry->keysym;
 }
 
-XKB_EXPORT const char *
+const char *
 xkb_compose_table_entry_utf8(struct xkb_compose_table_entry *entry)
 {
     return entry->utf8;
@@ -264,7 +252,7 @@ struct xkb_compose_table_iterator {
     darray(struct xkb_compose_table_iterator_pending_node) pending_nodes;
 };
 
-XKB_EXPORT struct xkb_compose_table_iterator *
+struct xkb_compose_table_iterator *
 xkb_compose_table_iterator_new(struct xkb_compose_table *table)
 {
     struct xkb_compose_table_iterator *iter;
@@ -275,7 +263,7 @@ xkb_compose_table_iterator_new(struct xkb_compose_table *table)
         return NULL;
     }
     iter->table = xkb_compose_table_ref(table);
-    sequence = calloc(MAX_LHS_LEN, sizeof(xkb_keysym_t));
+    sequence = calloc(COMPOSE_MAX_LHS_LEN, sizeof(xkb_keysym_t));
     if (!sequence) {
         free(iter);
         return NULL;
@@ -307,7 +295,7 @@ xkb_compose_table_iterator_new(struct xkb_compose_table *table)
     return iter;
 }
 
-XKB_EXPORT void
+void
 xkb_compose_table_iterator_free(struct xkb_compose_table_iterator *iter)
 {
     xkb_compose_table_unref(iter->table);
@@ -316,7 +304,7 @@ xkb_compose_table_iterator_free(struct xkb_compose_table_iterator *iter)
     free(iter);
 }
 
-XKB_EXPORT struct xkb_compose_table_entry *
+struct xkb_compose_table_entry *
 xkb_compose_table_iterator_next(struct xkb_compose_table_iterator *iter)
 {
     /* Traversal algorithm (simplified):

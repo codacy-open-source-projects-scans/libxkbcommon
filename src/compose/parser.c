@@ -1,62 +1,27 @@
 /*
+ * For HPND-sell-variant:
+ * Copyright 1992 by Oki Technosystems Laboratory, Inc.
+ * Copyright 1992 by Fuji Xerox Co., Ltd.
+ *
+ * For MIT:
  * Copyright © 2013 Ran Benita <ran234@gmail.com>
  *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
+ * SPDX-License-Identifier: HPND-sell-variant AND MIT
  *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS IN THE SOFTWARE.
+ * Author: Yasuhiro Kawai        Oki Technosystems Laboratory
+ * Author: Kazunori Nishihara    Fuji Xerox
  */
-
-/******************************************************************
-
-              Copyright 1992 by Oki Technosystems Laboratory, Inc.
-              Copyright 1992 by Fuji Xerox Co., Ltd.
-
-Permission to use, copy, modify, distribute, and sell this software
-and its documentation for any purpose is hereby granted without fee,
-provided that the above copyright notice appear in all copies and
-that both that copyright notice and this permission notice appear
-in supporting documentation, and that the name of Oki Technosystems
-Laboratory and Fuji Xerox not be used in advertising or publicity
-pertaining to distribution of the software without specific, written
-prior permission.
-Oki Technosystems Laboratory and Fuji Xerox make no representations
-about the suitability of this software for any purpose.  It is provided
-"as is" without express or implied warranty.
-
-OKI TECHNOSYSTEMS LABORATORY AND FUJI XEROX DISCLAIM ALL WARRANTIES
-WITH REGARD TO THIS SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF
-MERCHANTABILITY AND FITNESS, IN NO EVENT SHALL OKI TECHNOSYSTEMS
-LABORATORY AND FUJI XEROX BE LIABLE FOR ANY SPECIAL, INDIRECT OR
-CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
-OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE
-OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE
-OR PERFORMANCE OF THIS SOFTWARE.
-
-  Author: Yasuhiro Kawai        Oki Technosystems Laboratory
-  Author: Kazunori Nishihara    Fuji Xerox
-
-******************************************************************/
 
 #include "config.h"
 
 #include <errno.h>
+#include <string.h>
 
+#include "xkbcommon/xkbcommon-keysyms.h"
+#include "darray.h"
+#include "messages-codes.h"
 #include "utils.h"
+#include "constants.h"
 #include "table.h"
 #include "scanner-utils.h"
 #include "paths.h"
@@ -138,8 +103,7 @@ skip_more_whitespace_and_comments:
     if (scanner_eof(s)) return TOK_END_OF_FILE;
 
     /* New token. */
-    s->token_line = s->line;
-    s->token_column = s->column;
+    s->token_pos = s->pos;
     s->buf_pos = 0;
 
     /* LHS Keysym. */
@@ -147,12 +111,12 @@ skip_more_whitespace_and_comments:
         while (scanner_peek(s) != '>' && !scanner_eol(s) && !scanner_eof(s))
             scanner_buf_append(s, scanner_next(s));
         if (!scanner_chr(s, '>')) {
-            scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+            scanner_err(s, XKB_ERROR_INVALID_COMPOSE_SYNTAX,
                         "unterminated keysym literal");
             return TOK_ERROR;
         }
         if (!scanner_buf_append(s, '\0')) {
-            scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+            scanner_err(s, XKB_ERROR_INVALID_COMPOSE_SYNTAX,
                         "keysym literal is too long");
             return TOK_ERROR;
         }
@@ -186,8 +150,8 @@ skip_more_whitespace_and_comments:
                         scanner_buf_append(s, (char) o);
                     } else {
                         scanner_warn(s, XKB_WARNING_INVALID_ESCAPE_SEQUENCE,
-                                     "illegal hexadecimal escape sequence (%.*s) "
-                                     "in string literal",
+                                     "illegal hexadecimal escape sequence "
+                                     "\"%.*s\" in string literal",
                                      (int) (s->pos - start_pos + 1),
                                      &s->s[start_pos - 1]);
                     }
@@ -197,7 +161,7 @@ skip_more_whitespace_and_comments:
                 }
                 else if (s->pos > start_pos) {
                     scanner_warn(s, XKB_WARNING_INVALID_ESCAPE_SEQUENCE,
-                                 "illegal octal escape sequence (%.*s) "
+                                 "illegal octal escape sequence \"%.*s\" "
                                  "in string literal",
                                  (int) (s->pos - start_pos + 1),
                                  &s->s[start_pos - 1]);
@@ -205,7 +169,8 @@ skip_more_whitespace_and_comments:
                 }
                 else {
                     scanner_warn(s, XKB_WARNING_UNKNOWN_CHAR_ESCAPE_SEQUENCE,
-                                 "unknown escape sequence (\\%c) in string literal",
+                                 "unknown escape sequence \"\\%c\" "
+                                 "in string literal",
                                  scanner_peek(s));
                     /* Ignore. */
                 }
@@ -214,17 +179,17 @@ skip_more_whitespace_and_comments:
             }
         }
         if (!scanner_chr(s, '\"')) {
-            scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+            scanner_err(s, XKB_ERROR_INVALID_COMPOSE_SYNTAX,
                         "unterminated string literal");
             return TOK_ERROR;
         }
         if (!scanner_buf_append(s, '\0')) {
-            scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+            scanner_err(s, XKB_ERROR_INVALID_COMPOSE_SYNTAX,
                         "string literal is too long");
             return TOK_ERROR;
         }
         if (!is_valid_utf8(s->buf, s->buf_pos - 1)) {
-            scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+            scanner_err(s, XKB_ERROR_INVALID_FILE_ENCODING,
                         "string literal is not a valid UTF-8 string");
             return TOK_ERROR;
         }
@@ -239,7 +204,7 @@ skip_more_whitespace_and_comments:
         while (is_alnum(scanner_peek(s)) || scanner_peek(s) == '_')
             scanner_buf_append(s, scanner_next(s));
         if (!scanner_buf_append(s, '\0')) {
-            scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+            scanner_err(s, XKB_ERROR_INVALID_COMPOSE_SYNTAX,
                         "identifier is too long");
             return TOK_ERROR;
         }
@@ -252,7 +217,7 @@ skip_more_whitespace_and_comments:
         return TOK_IDENT;
     }
 
-    scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+    scanner_err(s, XKB_ERROR_INVALID_COMPOSE_SYNTAX,
                 "unrecognized token");
     /* Discard rest of line. */
     scanner_skip_to_eol(s);
@@ -267,12 +232,11 @@ lex_include_string(struct scanner *s, struct xkb_compose_table *table,
         if (scanner_next(s) == '\n')
             return TOK_END_OF_LINE;
 
-    s->token_line = s->line;
-    s->token_column = s->column;
+    s->token_pos = s->pos;
     s->buf_pos = 0;
 
     if (!scanner_chr(s, '\"')) {
-        scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+        scanner_err(s, XKB_ERROR_INVALID_COMPOSE_SYNTAX,
                     "include statement must be followed by a path");
         return TOK_ERROR;
     }
@@ -299,7 +263,7 @@ lex_include_string(struct scanner *s, struct xkb_compose_table *table,
             else if (scanner_chr(s, 'L')) {
                 char *path = get_locale_compose_file_path(table->ctx, table->locale);
                 if (!path) {
-                    scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                    scanner_err(s, XKB_ERROR_INVALID_COMPOSE_LOCALE,
                                 "failed to expand %%L to the locale Compose file");
                     return TOK_ERROR;
                 }
@@ -320,7 +284,7 @@ lex_include_string(struct scanner *s, struct xkb_compose_table *table,
                 }
             }
             else {
-                scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+                scanner_err(s, XKB_ERROR_INVALID_COMPOSE_SYNTAX,
                             "unknown %% format (%c) in include statement", scanner_peek(s));
                 return TOK_ERROR;
             }
@@ -329,7 +293,7 @@ lex_include_string(struct scanner *s, struct xkb_compose_table *table,
         }
     }
     if (!scanner_chr(s, '\"')) {
-        scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+        scanner_err(s, XKB_ERROR_INVALID_COMPOSE_SYNTAX,
                     "unterminated include statement");
         return TOK_ERROR;
     }
@@ -344,7 +308,7 @@ lex_include_string(struct scanner *s, struct xkb_compose_table *table,
 }
 
 struct production {
-    xkb_keysym_t lhs[MAX_LHS_LEN];
+    xkb_keysym_t lhs[COMPOSE_MAX_LHS_LEN];
     unsigned int len;
     xkb_keysym_t keysym;
     char string[XKB_COMPOSE_MAX_STRING_SIZE];
@@ -361,13 +325,14 @@ static void
 add_production(struct xkb_compose_table *table, struct scanner *s,
                const struct production *production)
 {
-    unsigned lhs_pos = 0;
+    unsigned int lhs_pos = 0;
     uint32_t curr = darray_size(table->nodes) == 1 ? 0 : 1;
     uint32_t *pptr = NULL;
     struct compose_node *node = NULL;
 
     /* Warn before potentially going over the limit, discard silently after. */
-    if (darray_size(table->nodes) + production->len + MAX_LHS_LEN > MAX_COMPOSE_NODES)
+    if (darray_size(table->nodes) + production->len + COMPOSE_MAX_LHS_LEN >
+        MAX_COMPOSE_NODES)
         scanner_warn(s, XKB_LOG_MESSAGE_NO_ID,
                      "too many sequences for one Compose file; "
                      "will ignore further lines");
@@ -454,25 +419,46 @@ add_production(struct xkb_compose_table *table, struct scanner *s,
             } else if (node->internal.eqkid != 0) {
                 scanner_warn(s, XKB_LOG_MESSAGE_NO_ID,
                              "this compose sequence is a prefix of another; "
-                             "skipping line");
-                return;
+                             "overriding");
+                node->internal.eqkid = 0;
             }
-            node->is_leaf = true;
+
+            /* NOTE: If there was a previous entry, its string may *not* be
+             * reused in the UTF8 table and the corresponding memory is then
+             * wasted! */
             if (production->has_string) {
-                node->leaf.utf8 = darray_size(table->utf8);
-                darray_append_items(table->utf8, production->string,
-                                    strlen(production->string) + 1);
+                const size_t len = strlen(production->string);
+                if (node->is_leaf && node->leaf.utf8 &&
+                    len <= strlen(&darray_item(table->utf8, node->leaf.utf8))) {
+                    /* There is a previous entry with an overwritable string */
+                    memcpy(&darray_item(table->utf8, node->leaf.utf8),
+                           production->string, len + 1);
+                } else {
+                    /* Cannot reuse string: allocate new one */
+                    node->leaf.utf8 = darray_size(table->utf8);
+                    darray_append_items(table->utf8, production->string,
+                                        (darray_size_t)strlen(production->string) + 1);
+                }
+            } else {
+                /* Ensure we reset possible previous entry */
+                node->leaf.utf8 = 0;
             }
+
             if (production->has_keysym) {
                 node->leaf.keysym = production->keysym;
+            } else {
+                /* Ensure we reset possible previous entry */
+                node->leaf.keysym = XKB_KEY_NoSymbol;
             }
+
+            node->is_leaf = true;
             return;
         }
     }
 }
 
 /* Should match resolve_modifier(). */
-#define ALL_MODS_MASK ((1 << 0) | (1 << 1) | (1 << 2) | (1 << 3))
+#define ALL_MODS_MASK ((1u << 0) | (1u << 1) | (1u << 2) | (1u << 3))
 
 static xkb_mod_index_t
 resolve_modifier(const char *name)
@@ -489,7 +475,7 @@ resolve_modifier(const char *name)
         { "Caps", 1 },
     };
 
-    for (unsigned i = 0; i < ARRAY_SIZE(mods); i++)
+    for (unsigned int i = 0; i < ARRAY_SIZE(mods); i++)
         if (streq(name, mods[i].name))
             return mods[i].mod;
 
@@ -504,7 +490,7 @@ parse_string_literal(struct xkb_context *ctx, const char *string)
 {
     struct scanner s;
     union lvalue val;
-    scanner_init(&s, ctx, string, strlen(string), "(unamed)", NULL);
+    scanner_init(&s, ctx, string, strlen(string), "(unnamed)", NULL);
     switch (lex(&s, &val)) {
         case TOK_STRING:
             return strdup(val.string.str);
@@ -516,11 +502,11 @@ parse_string_literal(struct xkb_context *ctx, const char *string)
 
 static bool
 parse(struct xkb_compose_table *table, struct scanner *s,
-      unsigned include_depth);
+      unsigned int include_depth);
 
 static bool
 do_include(struct xkb_compose_table *table, struct scanner *s,
-           const char *path, unsigned include_depth)
+           const char *path, unsigned int include_depth)
 {
     FILE *file;
     bool ok;
@@ -528,10 +514,10 @@ do_include(struct xkb_compose_table *table, struct scanner *s,
     size_t size;
     struct scanner new_s;
 
-    if (include_depth >= MAX_INCLUDE_DEPTH) {
+    if (include_depth >= COMPOSE_MAX_INCLUDE_DEPTH) {
         scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
-                    "maximum include depth (%d) exceeded; maybe there is an include loop?",
-                    MAX_INCLUDE_DEPTH);
+                    "maximum include depth (%u) exceeded; maybe there is an include loop?",
+                    COMPOSE_MAX_INCLUDE_DEPTH);
         return false;
     }
 
@@ -566,7 +552,7 @@ err_file:
 
 static bool
 parse(struct xkb_compose_table *table, struct scanner *s,
-      unsigned include_depth)
+      unsigned int include_depth)
 {
     enum rules_token tok;
     union lvalue val;
@@ -579,7 +565,7 @@ parse(struct xkb_compose_table *table, struct scanner *s,
        The first character relevant to the grammar must be ASCII:
        whitespace, include, modifier list, keysym, comment */
     if (!scanner_check_supported_char_encoding(s)) {
-        scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+        scanner_err(s, XKB_ERROR_INVALID_FILE_ENCODING,
                     "This could be a file encoding issue. "
                     "Supported file encodings are ASCII and UTF-8.");
         goto fail;
@@ -665,11 +651,11 @@ lhs_keysym_tok:
             goto error;
         }
         check_deprecated_keysyms(scanner_warn, s, s->ctx,
-                                 keysym, val.string.str, val.string.str, "%s", "\n");
-        if (production.len + 1 > MAX_LHS_LEN) {
-            scanner_warn(s, XKB_LOG_MESSAGE_NO_ID,
-                         "too many keysyms (%d) on left-hand side; skipping line",
-                         MAX_LHS_LEN + 1);
+                                 keysym, val.string.str, val.string.str, "%s", "");
+        if (production.len + 1 > COMPOSE_MAX_LHS_LEN) {
+            scanner_warn(s, XKB_ERROR_INVALID_COMPOSE_SYNTAX,
+                         "too many keysyms (%u) on left-hand side; skipping line",
+                         COMPOSE_MAX_LHS_LEN + 1);
             goto skip;
         }
         production.lhs[production.len++] = keysym;
@@ -699,17 +685,17 @@ lhs_mod_list_tok: {
 
         mod = resolve_modifier(val.string.str);
         if (mod == XKB_MOD_INVALID) {
-            scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+            scanner_err(s, XKB_ERROR_INVALID_COMPOSE_SYNTAX,
                         "unrecognized modifier \"%s\"",
                         val.string.str);
             goto error;
         }
 
-        production.modmask |= 1 << mod;
+        production.modmask |= UINT32_C(1) << mod;
         if (tilde)
-            production.mods &= ~(1 << mod);
+            production.mods &= ~(UINT32_C(1) << mod);
         else
-            production.mods |= 1 << mod;
+            production.mods |= UINT32_C(1) << mod;
 
         goto lhs_mod_list;
     }
@@ -732,12 +718,12 @@ rhs:
         if (val.string.len > sizeof(production.string)) {
             scanner_warn(s, XKB_LOG_MESSAGE_NO_ID,
                          "right-hand side string is too long: "
-                         "expected max: %d, got: %d; skipping line",
-                         (int)sizeof(production.string) - 1,
-                         (int)val.string.len);
+                         "expected max: %zu, got: %zu; skipping line",
+                         sizeof(production.string) - 1,
+                         val.string.len - 1);
             goto skip;
         }
-        strcpy(production.string, val.string.str);
+        memcpy(production.string, val.string.str, val.string.len);
         production.has_string = true;
         goto rhs;
     case TOK_IDENT:
@@ -749,9 +735,9 @@ rhs:
             goto error;
         }
         check_deprecated_keysyms(scanner_warn, s, s->ctx,
-                                 keysym, val.string.str, val.string.str, "%s", "\n");
+                                 keysym, val.string.str, val.string.str, "%s", "");
         if (production.has_keysym) {
-            scanner_warn(s, XKB_LOG_MESSAGE_NO_ID,
+            scanner_warn(s, XKB_ERROR_INVALID_COMPOSE_SYNTAX,
                          "right-hand side can have at most one keysym; "
                          "skipping line");
             goto skip;
@@ -761,7 +747,7 @@ rhs:
         /* fallthrough */
     case TOK_END_OF_LINE:
         if (!production.has_string && !production.has_keysym) {
-            scanner_warn(s, XKB_LOG_MESSAGE_NO_ID,
+            scanner_warn(s, XKB_ERROR_INVALID_COMPOSE_SYNTAX,
                          "right-hand side must have at least one of string "
                          "or keysym; skipping line");
             goto skip;
@@ -774,7 +760,7 @@ rhs:
 
 unexpected:
     if (tok != TOK_ERROR)
-        scanner_err(s, XKB_LOG_MESSAGE_NO_ID,
+        scanner_err(s, XKB_ERROR_INVALID_COMPOSE_SYNTAX,
                     "unexpected token");
 error:
     num_errors++;

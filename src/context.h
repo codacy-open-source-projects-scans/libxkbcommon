@@ -1,33 +1,22 @@
 /*
  * Copyright © 2012 Intel Corporation
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  *
  * Author: Daniel Stone <daniel@fooishbar.org>
  */
+#pragma once
 
-#ifndef CONTEXT_H
-#define CONTEXT_H
+#include "config.h"
 
+#include <stdbool.h>
+#include <stddef.h>
+
+#include "xkbcommon/xkbcommon.h"
 #include "atom.h"
+#include "darray.h"
 #include "messages-codes.h"
+#include "rmlvo.h"
+#include "utils.h"
 
 struct xkb_context {
     int refcnt;
@@ -53,25 +42,38 @@ struct xkb_context {
     char text_buffer[2048];
     size_t text_next;
 
-    unsigned int use_environment_names : 1;
-    unsigned int use_secure_getenv : 1;
+    bool use_environment_names : 1;
+    bool use_secure_getenv : 1;
+    bool pending_default_includes : 1;
 };
 
 char *
 xkb_context_getenv(struct xkb_context *ctx, const char *name);
 
-unsigned int
+darray_size_t
 xkb_context_num_failed_include_paths(struct xkb_context *ctx);
+
+bool
+xkb_context_init_includes(struct xkb_context *ctx);
 
 const char *
 xkb_context_failed_include_path_get(struct xkb_context *ctx,
-                                    unsigned int idx);
+                                    darray_size_t idx);
 
 const char *
 xkb_context_include_path_get_extra_path(struct xkb_context *ctx);
 
 const char *
+xkb_context_include_path_get_unversioned_extensions_path(struct xkb_context *ctx);
+
+const char *
+xkb_context_include_path_get_versioned_extensions_path(struct xkb_context *ctx);
+
+const char *
 xkb_context_include_path_get_system_path(struct xkb_context *ctx);
+
+XKB_EXPORT_PRIVATE darray_size_t
+xkb_atom_table_size(struct xkb_context *ctx);
 
 /*
  * Returns XKB_ATOM_NONE if @string was not previously interned,
@@ -80,7 +82,7 @@ xkb_context_include_path_get_system_path(struct xkb_context *ctx);
 xkb_atom_t
 xkb_atom_lookup(struct xkb_context *ctx, const char *string);
 
-xkb_atom_t
+XKB_EXPORT_PRIVATE xkb_atom_t
 xkb_atom_intern(struct xkb_context *ctx, const char *string, size_t len);
 
 #define xkb_atom_intern_literal(ctx, literal) \
@@ -95,17 +97,17 @@ xkb_atom_intern(struct xkb_context *ctx, const char *string, size_t len);
 xkb_atom_t
 xkb_atom_steal(struct xkb_context *ctx, char *string);
 
-const char *
+XKB_EXPORT_PRIVATE const char *
 xkb_atom_text(struct xkb_context *ctx, xkb_atom_t atom);
 
 char *
 xkb_context_get_buffer(struct xkb_context *ctx, size_t size);
 
-ATTR_PRINTF(4, 5) void
+XKB_EXPORT_PRIVATE ATTR_PRINTF(4, 5) void
 xkb_log(struct xkb_context *ctx, enum xkb_log_level level, int verbosity,
         const char *fmt, ...);
 
-void
+enum RMLVO
 xkb_context_sanitize_rule_names(struct xkb_context *ctx,
                                 struct xkb_rule_names *rmlvo);
 
@@ -118,17 +120,17 @@ xkb_context_sanitize_rule_names(struct xkb_context *ctx,
 #define xkb_log_with_code(ctx, level, verbosity, msg_id, fmt, ...) \
     xkb_log(ctx, level, verbosity, PREPEND_MESSAGE_ID(msg_id, fmt), ##__VA_ARGS__)
 #define log_dbg(ctx, id, ...) \
-    xkb_log_with_code((ctx), XKB_LOG_LEVEL_DEBUG, 0, id, __VA_ARGS__)
+    xkb_log_with_code((ctx), XKB_LOG_LEVEL_DEBUG, XKB_LOG_VERBOSITY_MINIMAL, id, __VA_ARGS__)
 #define log_info(ctx, id, ...) \
-    xkb_log_with_code((ctx), XKB_LOG_LEVEL_INFO, 0, id, __VA_ARGS__)
+    xkb_log_with_code((ctx), XKB_LOG_LEVEL_INFO, XKB_LOG_VERBOSITY_MINIMAL, id, __VA_ARGS__)
 #define log_warn(ctx, id, ...) \
-    xkb_log_with_code((ctx), XKB_LOG_LEVEL_WARNING, 0, id, __VA_ARGS__)
+    xkb_log_with_code((ctx), XKB_LOG_LEVEL_WARNING, XKB_LOG_VERBOSITY_MINIMAL, id, __VA_ARGS__)
 #define log_vrb(ctx, vrb, id, ...) \
     xkb_log_with_code((ctx), XKB_LOG_LEVEL_WARNING, (vrb), id, __VA_ARGS__)
 #define log_err(ctx, id, ...) \
-    xkb_log_with_code((ctx), XKB_LOG_LEVEL_ERROR, 0, id, __VA_ARGS__)
+    xkb_log_with_code((ctx), XKB_LOG_LEVEL_ERROR, XKB_LOG_VERBOSITY_MINIMAL, id, __VA_ARGS__)
 #define log_wsgo(ctx, id, ...) \
-    xkb_log_with_code((ctx), XKB_LOG_LEVEL_CRITICAL, 0, id, __VA_ARGS__)
+    xkb_log_with_code((ctx), XKB_LOG_LEVEL_CRITICAL, XKB_LOG_VERBOSITY_MINIMAL, id, __VA_ARGS__)
 
 /*
  * Variants which are prefixed by the name of the function they're
@@ -139,5 +141,3 @@ xkb_context_sanitize_rule_names(struct xkb_context *ctx,
     log_err(ctx, id, "%s: " fmt, __func__, __VA_ARGS__)
 #define log_err_func1(ctx, id, fmt) \
     log_err(ctx, id, "%s: " fmt, __func__)
-
-#endif
