@@ -34,11 +34,11 @@
 #include "xkbcommon/xkbcommon-compose.h"
 #include "tools-common.h"
 #include "src/compose/constants.h"
-#include "src/utils.h"
-#include "src/utf8-decoding.h"
 #include "src/keysym.h"
 #include "src/keymap.h"
 #include "src/messages-codes.h"
+#include "src/utils.h"
+#include "src/utf8-decoding.h"
 
 #if defined(_WIN32) && !defined(S_ISFIFO)
 #define S_ISFIFO(mode) 0
@@ -307,6 +307,54 @@ print_leds(struct xkb_state *state, bool verbose) {
         } else {
             printf("%s", xkb_keymap_led_get_name(keymap, led));
         }
+        count++;
+    }
+}
+
+static void
+print_controls(struct xkb_state *state, bool verbose) {
+    static const struct {
+        enum xkb_action_controls control;
+        const char *name;
+    } controls[] = {
+        { CONTROL_REPEAT, "repeat" },
+        { CONTROL_SLOW, "slow" },
+        { CONTROL_DEBOUNCE, "debounce" },
+        { CONTROL_STICKY_KEYS, "sticky-keys" },
+        { CONTROL_MOUSE_KEYS, "mouse-keys" },
+        { CONTROL_MOUSE_KEYS_ACCEL, "mouse-keys-accel" },
+        { CONTROL_AX, "ax" },
+        { CONTROL_AX_TIMEOUT, "ax-timeout" },
+        { CONTROL_AX_FEEDBACK, "ax-feedback" },
+        { CONTROL_BELL, "bell" },
+        { CONTROL_IGNORE_GROUP_LOCK, "ignore-group-lock" },
+    };
+    static_assert(
+        CONTROL_ALL ==
+        (CONTROL_REPEAT | CONTROL_SLOW | CONTROL_DEBOUNCE | \
+         CONTROL_STICKY_KEYS | CONTROL_MOUSE_KEYS | CONTROL_MOUSE_KEYS_ACCEL | \
+         CONTROL_AX | CONTROL_AX_TIMEOUT | CONTROL_AX_FEEDBACK | \
+         CONTROL_BELL | CONTROL_IGNORE_GROUP_LOCK),
+        "missing controls names"
+    );
+
+    const enum xkb_keyboard_controls ctrls =
+        xkb_state_serialize_controls(state, XKB_STATE_CONTROLS);
+
+    printf("0x%08"PRIx32" ", ctrls);
+
+    if (!ctrls) {
+        printf("(none)");
+        return;
+    }
+
+    unsigned int count = 0;
+    for (uint8_t c = 0; c < (uint8_t) ARRAY_SIZE(controls); c++) {
+        if (!(controls[c].control & ctrls))
+            continue;
+        if (count > 0)
+            printf(", ");
+        printf("%s", controls[c].name);
         count++;
     }
 }
@@ -582,6 +630,8 @@ tools_print_state_changes(const char *prefix, struct xkb_state *state,
                         XKB_CONSUMED_MODE_XKB /* unused*/, false);
         if (changed & XKB_STATE_LEDS)
             printf("leds ");
+        if (changed & XKB_STATE_CONTROLS)
+            printf("controls ");
         printf("]\n");
     } else {
         printf("state changes:\n");
@@ -604,6 +654,12 @@ tools_print_state_changes(const char *prefix, struct xkb_state *state,
         if (changed & XKB_STATE_LEDS) {
             printf(INDENT "LEDs: ");
             print_leds(state, true);
+            printf("\n");
+        }
+
+        if (changed & XKB_STATE_CONTROLS) {
+            printf(INDENT "Controls: ");
+            print_controls(state, true);
             printf("\n");
         }
     }
@@ -766,4 +822,113 @@ tools_read_stdin(void)
 err:
     fclose(file);
     return NULL;
+}
+
+bool
+tools_parse_controls(const char *raw, struct xkb_state_options *options,
+                     enum xkb_keyboard_controls *controls_affect,
+                     enum xkb_keyboard_controls *controls_values)
+{
+    if (isempty(raw))
+        return true;
+
+    enum control_field {
+        CONTROL_FIELD_STICKY_KEYS = 0,
+        CONTROL_FIELD_LATCH_TO_LOCK,
+        CONTROL_FIELD_LATCH_SIMULTANEOUS,
+        _NUM_CONTROL_FIELDS,
+    };
+
+    static const struct {
+        const char *name;
+        enum control_field type;
+    } fields[] = {
+        { "sticky-keys",        CONTROL_FIELD_STICKY_KEYS },
+        { "latch-to-lock",      CONTROL_FIELD_LATCH_TO_LOCK },
+        { "latch-simultaneous", CONTROL_FIELD_LATCH_SIMULTANEOUS },
+    };
+
+    const char *start = raw;
+    const char *s = start;
+
+    bool ok = true;
+
+    /* Parse comma-separated list of options */
+    while (true) {
+        /* Consume until reaching next item or end of string */
+        while (*s != '\0' && *s != ',') { s++; }
+
+        /*
+         * Handle +/- prefix, to respectively enable or disable the
+         * corresponding option. This enable to explicitly override defaults.
+         */
+        const bool disable = (start[0] == '-');
+        if (disable || start[0] == '+')
+            start++;
+
+        const size_t len = s - start;
+        if (!len) {
+            if (s[0] == ',') {
+                /* Accept empty entry */
+                goto next;
+            } else {
+                break;
+            }
+        }
+
+        ok = false;
+        for (uint8_t f = 0; f < (uint8_t) ARRAY_SIZE(fields); f++) {
+            if (strncmp(start, fields[f].name, len) != 0 ||
+                fields[f].name[len] != '\0')
+                continue;
+
+            ok = true;
+
+            switch (fields[f].type) {
+            case CONTROL_FIELD_STICKY_KEYS:
+                if (disable)
+                    *controls_values &= ~XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS;
+                else
+                    *controls_values |= XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS;
+                *controls_affect |= XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS;
+                break;
+            case CONTROL_FIELD_LATCH_TO_LOCK:
+                ok = xkb_state_options_update_a11y_flags(
+                    options,
+                    XKB_STATE_A11Y_FLAG_LATCH_TO_LOCK,
+                    (disable ? 0 : XKB_STATE_A11Y_FLAG_LATCH_TO_LOCK)
+                ) == 0;
+                break;
+            case CONTROL_FIELD_LATCH_SIMULTANEOUS:
+                ok = xkb_state_options_update_a11y_flags(
+                    options,
+                    XKB_STATE_A11Y_FLAG_LATCH_SIMULTANEOUS_KEYS,
+                    (disable ? 0 : XKB_STATE_A11Y_FLAG_LATCH_SIMULTANEOUS_KEYS)
+                ) == 0;
+                break;
+            default:
+                {} /* Label followed by declaration requires C23 */
+                static_assert(
+                    CONTROL_FIELD_LATCH_SIMULTANEOUS == 2 &&
+                    CONTROL_FIELD_LATCH_SIMULTANEOUS + 1 == _NUM_CONTROL_FIELDS,
+                    "missing case"
+                );
+            }
+        }
+
+        if (!ok) {
+            fprintf(stderr, "ERROR: cannot parse control entry: \"%.*s\"\n",
+                    (unsigned int) len, start);
+            break;
+        }
+
+next:
+        if (s[0] == '\0')
+            break;
+
+        s++;
+        start = s;
+    }
+
+    return ok;
 }

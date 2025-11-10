@@ -115,7 +115,7 @@ translate_mods(uint8_t rmods, uint16_t vmods_low, uint16_t vmods_high)
         ((xkb_mod_mask_t) vmods_high << 16);
 }
 
-static enum xkb_action_controls
+enum xkb_action_controls
 translate_controls_mask(uint32_t wire)
 {
     enum xkb_action_controls ret = 0;
@@ -126,11 +126,11 @@ translate_controls_mask(uint32_t wire)
     if (wire & XCB_XKB_BOOL_CTRL_BOUNCE_KEYS)
         ret |= CONTROL_DEBOUNCE;
     if (wire & XCB_XKB_BOOL_CTRL_STICKY_KEYS)
-        ret |= CONTROL_STICKY;
+        ret |= CONTROL_STICKY_KEYS;
     if (wire & XCB_XKB_BOOL_CTRL_MOUSE_KEYS)
-        ret |= CONTROL_MOUSEKEYS;
+        ret |= CONTROL_MOUSE_KEYS;
     if (wire & XCB_XKB_BOOL_CTRL_MOUSE_KEYS_ACCEL)
-        ret |= CONTROL_MOUSEKEYS_ACCEL;
+        ret |= CONTROL_MOUSE_KEYS_ACCEL;
     if (wire & XCB_XKB_BOOL_CTRL_ACCESS_X_KEYS)
         ret |= CONTROL_AX;
     if (wire & XCB_XKB_BOOL_CTRL_ACCESS_X_TIMEOUT_MASK)

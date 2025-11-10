@@ -22,6 +22,7 @@
 
 #include "config.h"
 
+#include <assert.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -48,11 +49,16 @@ format_max_groups(enum xkb_keymap_format format)
         : XKB_MAX_GROUPS;
 }
 
+/* Don't allow more leds than we can hold in xkb_led_mask_t. */
+#define XKB_MAX_LEDS ((xkb_led_index_t) (sizeof(xkb_led_mask_t) * CHAR_BIT))
+
 /* Don't allow more modifiers than we can hold in xkb_mod_mask_t. */
 #define XKB_MAX_MODS ((xkb_mod_index_t) (sizeof(xkb_mod_mask_t) * CHAR_BIT))
 
-/* Don't allow more leds than we can hold in xkb_led_mask_t. */
-#define XKB_MAX_LEDS ((xkb_led_index_t) (sizeof(xkb_led_mask_t) * CHAR_BIT))
+enum {
+    /** Mask of all possible modifiers */
+    XKB_MOD_ALL = UINT32_MAX,
+};
 
 /* Special value to handle modMap None {…} */
 #define XKB_MOD_NONE 0xffffffffU
@@ -120,24 +126,40 @@ enum xkb_action_flags {
     ACTION_LATCH_ON_PRESS = (1 << 12),
 };
 
+/**
+ * This is the general version of the *public* `xkb_keyboard_controls` enum.
+ * We do not expose the following enum, as it does not make sense to expose
+ * controls whose effects we do not support.
+ * However, we should enforce both enum to share the same values.
+ */
 enum xkb_action_controls {
     CONTROL_REPEAT = (1 << 0),
     CONTROL_SLOW = (1 << 1),
     CONTROL_DEBOUNCE = (1 << 2),
-    CONTROL_STICKY = (1 << 3),
-    CONTROL_MOUSEKEYS = (1 << 4),
-    CONTROL_MOUSEKEYS_ACCEL = (1 << 5),
+    CONTROL_STICKY_KEYS = (1 << 3),
+    CONTROL_MOUSE_KEYS = (1 << 4),
+    CONTROL_MOUSE_KEYS_ACCEL = (1 << 5),
     CONTROL_AX = (1 << 6),
     CONTROL_AX_TIMEOUT = (1 << 7),
     CONTROL_AX_FEEDBACK = (1 << 8),
     CONTROL_BELL = (1 << 9),
     CONTROL_IGNORE_GROUP_LOCK = (1 << 10),
+    /**
+     * All the XKB Controls. If we ever introduce *internal* controls, this mask
+     * should not include them.
+     */
     CONTROL_ALL = \
-        (CONTROL_REPEAT | CONTROL_SLOW | CONTROL_DEBOUNCE | CONTROL_STICKY | \
-         CONTROL_MOUSEKEYS | CONTROL_MOUSEKEYS_ACCEL | CONTROL_AX | \
-         CONTROL_AX_TIMEOUT | CONTROL_AX_FEEDBACK | CONTROL_BELL | \
-         CONTROL_IGNORE_GROUP_LOCK)
+        (CONTROL_REPEAT | CONTROL_SLOW | CONTROL_DEBOUNCE | \
+         CONTROL_STICKY_KEYS | CONTROL_MOUSE_KEYS | CONTROL_MOUSE_KEYS_ACCEL | \
+         CONTROL_AX | CONTROL_AX_TIMEOUT | CONTROL_AX_FEEDBACK | \
+         CONTROL_BELL | CONTROL_IGNORE_GROUP_LOCK)
 };
+
+static_assert(
+    CONTROL_STICKY_KEYS ==
+    (enum xkb_action_controls) XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS,
+    "Private value should match public API"
+);
 
 enum xkb_match_operation {
     MATCH_NONE,

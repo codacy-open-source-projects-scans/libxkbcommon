@@ -313,7 +313,17 @@ typedef uint32_t xkb_led_mask_t;
  */
 struct xkb_rmlvo_builder;
 
+/**
+ * Flags for `xkb_rmlvo_builder_new()`.
+ *
+ * @since 1.11.0
+ */
 enum xkb_rmlvo_builder_flags {
+    /**
+     * Do not apply any flags.
+     *
+     * @since 1.11.0
+     */
     XKB_RMLVO_BUILDER_NO_FLAGS = 0
 };
 
@@ -1767,16 +1777,157 @@ xkb_keymap_key_repeats(struct xkb_keymap *keymap, xkb_keycode_t key);
  */
 
 /**
+ * Opaque options object to configure a keyboard state.
+ *
+ * @since 1.14.0
+ */
+struct xkb_state_options;
+
+/**
+ * Create a new keyboard state object options.
+ *
+ * @param context The context in which to create the options.
+ *
+ * @returns A new keyboard state options object, or `NULL` on failure.
+ *
+ * @since 1.14.0
+ *
+ * @memberof xkb_state
+ */
+XKB_EXPORT struct xkb_state_options *
+xkb_state_options_new(struct xkb_context *context);
+
+/**
+ * Free a keyboard state options object.
+ *
+ * @param options The state options. If it is `NULL`, this function does nothing.
+ *
+ * @since 1.14.0
+ *
+ * @memberof xkb_state
+ */
+XKB_EXPORT void
+xkb_state_options_destroy(struct xkb_state_options *options);
+
+/**
+ * Flags for `xkb_state_options_update_a11y_flags()`.
+ *
+ * @since 1.14.0
+ */
+enum xkb_state_accessibility_flags {
+    /**
+     * Do not apply any flags.
+     *
+     * @since 1.14.0
+     */
+    XKB_STATE_A11Y_NO_FLAGS = 0,
+    /**
+     * If both `::XKB_STATE_A11Y_FLAG_LATCH_TO_LOCK` and
+     * `::XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS` are activated, they enable
+     * users to [lock] modifier keys without requiring special locking keys.
+     * The user can press a [latch] modifier twice in a row to lock it, and
+     * then unlock it by pressing it one more time.
+     *
+     * @sa `::XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS`
+     * @since 1.14.0
+     *
+     * [latch]: @ref latched-mod-def
+     * [lock]:  @ref locked-mod-def
+     */
+    XKB_STATE_A11Y_FLAG_LATCH_TO_LOCK = (1 << 0),
+    /**
+     * Without this option, the [latch] keys are only triggers if keys are
+     * strictly *sequentially tapped*, e.g.:
+     * 1. `ISO_Level2_Latch` ↓
+     * 2. `ISO_Level2_Latch` ↑
+     * 3. `A` ↓
+     * 4. `A` ↑
+     *
+     * If one wants *multiple* active latches, they must be tapped in sequence:
+     * e.g.:
+     * 1. `ISO_Level2_Latch` ↓
+     * 2. `ISO_Level2_Latch` ↑
+     * 3. `ISO_Level3_Latch` ↓
+     * 4. `ISO_Level3_Latch` ↑
+     * 5. `A` ↓
+     * 6. `A` ↑
+     *
+     * This option relaxes the strict sequence requirement and enable to operate
+     * keys that do not break latches *simultaneously* with a [latch] key, e.g.:
+     * 1. `ISO_Level2_Latch` ↓
+     * 2. `ISO_Level3_Latch` ↓
+     * 3. `ISO_Level2_Latch` ↑
+     * 4. `ISO_Level3_Latch` ↑
+     * 5. `A` ↓
+     * 6. `A` ↑
+     *
+     * This is an extension to the X11 XKB protocol and is enabled by default
+     * when using `::XKB_KEYMAP_FORMAT_TEXT_V2`.
+     *
+     * @since 1.14.0
+     *
+     * [latch]: @ref latched-mod-def
+     */
+    XKB_STATE_A11Y_FLAG_LATCH_SIMULTANEOUS_KEYS = (1 << 1),
+};
+
+/**
+ * Update the accessibility flags of a state options object.
+ *
+ * @param options The state options object to modify.
+ * @param affect  Accessibility flags to modify.
+ * @param flags   Accessibility flags to set or unset. Only the flags in
+ * @p affect are considered.
+ *
+ * @returns 0 on success, otherwise an error code.
+ *
+ * @since 1.14.0
+ *
+ * @memberof xkb_state
+ */
+XKB_EXPORT int
+xkb_state_options_update_a11y_flags(struct xkb_state_options *options,
+                                    enum xkb_state_accessibility_flags affect,
+                                    enum xkb_state_accessibility_flags flags);
+
+/**
  * Create a new keyboard state object.
+ *
+ * This entry point is intended for both server and client applications.
+ * However, *server* applications may prefer to use `xkb_state_new2()` to get
+ * more control over the state configuration.
  *
  * @param keymap The keymap which the state will use.
  *
  * @returns A new keyboard state object, or `NULL` on failure.
  *
+ * @sa `xkb_state_new2()`
+ *
  * @memberof xkb_state
  */
 XKB_EXPORT struct xkb_state *
 xkb_state_new(struct xkb_keymap *keymap);
+
+/**
+ * Create a new keyboard state object with explicit options.
+ *
+ * This entry point is intended for *server* applications; *client* applications
+ * should use `xkb_state_new()` instead.
+ *
+ * @param keymap  The keymap which the state will use.
+ * @param options The options to configure the state.
+ *
+ * @returns A new keyboard state object, or `NULL` on failure.
+ *
+ * @sa `xkb_state_new()`
+ *
+ * @since 1.14.0
+ *
+ * @memberof xkb_state
+ */
+XKB_EXPORT struct xkb_state *
+xkb_state_new2(struct xkb_keymap *keymap,
+               const struct xkb_state_options *options);
 
 /**
  * Take a new reference on a keyboard state object.
@@ -1879,8 +2030,65 @@ enum xkb_state_component {
      *  Use this unless you explicitly care how the state came about. */
     XKB_STATE_LAYOUT_EFFECTIVE = (1 << 7),
     /** LEDs (derived from the other state components). */
-    XKB_STATE_LEDS = (1 << 8)
+    XKB_STATE_LEDS = (1 << 8),
+    /** Effective keyboard controls */
+    XKB_STATE_CONTROLS = (1 << 9)
 };
+
+/**
+ * **Global keyboard controls**, which affect the way libxkbcommon handles the
+ * keyboard as a whole.
+ *
+ * This enumeration is bit-maskable.
+ *
+ * @since 1.14.0
+ */
+enum xkb_keyboard_controls {
+    /**
+     * Do not apply any control.
+     *
+     * @since 1.14.0
+     */
+    XKB_KEYBOARD_CONTROL_NONE = 0,
+    /**
+     * **Sticky keys** is an accessibility feature primarily aimed at helping
+     * people that find it difficult or impossible to press two keys at once.
+     *
+     * The `::XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS` control makes it easier for
+     * them to type by changing the behavior of the *modifier* and *group switch*
+     * keys. When *sticky keys* are enabled, <em>[set]</em> modifiers/group
+     * switch are transformed into their corresponding <em>[latch]</em> version:
+     * e.g. the user can first press a modifier, release it, then press another
+     * key.
+     *
+     * @sa `::XKB_STATE_A11Y_FLAG_LATCH_TO_LOCK`
+     * @since 1.14.0
+     *
+     * [set]:   @ref depressed-mod-def
+     * [latch]: @ref latched-mod-def
+     */
+    XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS = (1 << 3),
+};
+
+/**
+ * Update the keyboard state to change the [global keyboard controls].
+ *
+ * @param state The keyboard state object.
+ * @param affect
+ * @param controls
+ *     Global keyboard controls to lock or unlock. Only modifiers in @p affect
+ *     are considered.
+ *
+ * @since 1.14.0
+ *
+ * @memberof xkb_state
+ *
+ * [global keyboard controls]: @ref xkb_keyboard_controls
+ */
+XKB_EXPORT enum xkb_state_component
+xkb_state_update_controls(struct xkb_state *state,
+                          enum xkb_keyboard_controls affect,
+                          enum xkb_keyboard_controls controls);
 
 /**
  * Update the keyboard state to reflect a given key being pressed or
@@ -2155,6 +2363,20 @@ enum xkb_state_match {
      *  modifier not specified in the arguments is active. */
     XKB_STATE_MATCH_NON_EXCLUSIVE = (1 << 16)
 };
+
+/**
+ * Serialization of the [global keyboard controls], to be used on the server
+ * side of serialization.
+ *
+ * @since 1.14.0
+ *
+ * @memberof xkb_state
+ *
+ * [global keyboard controls]: @ref xkb_keyboard_controls
+ */
+XKB_EXPORT enum xkb_keyboard_controls
+xkb_state_serialize_controls(struct xkb_state *state,
+                             enum xkb_state_component components);
 
 /**
  * The counterpart to `xkb_state::xkb_state_update_mask()` for modifiers, to be

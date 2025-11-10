@@ -3337,7 +3337,7 @@ enumeration:
 - `lock`: the action only locks the modifier, but cannot unlock it.
 - `unlock`: the action only unlocks modifier, but cannot lock it.
 - `both`: the first key press locks the modifier and the second key
-  press releases the modifier..
+  press releases the modifier.
 - `neither`: do not lock nor unlock, i.e. do nothing.
 </td>
 </tr>
@@ -3796,13 +3796,59 @@ enumeration:
 - `neither`
 </td>
 <td>`both`</td>
-<td><span class="todo">TODO</span></td>
+<td>
+- `lock`: the action only locks the controls, but cannot unlock them.
+- `unlock`: the action only unlocks controls, but cannot lock them.
+- `both`: the first key press locks the controls and the second key
+  press releases the controls.
+- `neither`: do not lock nor unlock, i.e. do nothing.
+</td>
 </tr>
 </tbody>
 </table>
 
 </dd>
 </dl>
+
+@warning Only a subset of the original XKB controls are *effectual*.
+See `xkb_keyboard_controls` for further details.
+
+<table>
+<caption>
+Effects of controls actions @anchor controls-actions-effects
+</caption>
+<thead>
+<tr>
+<th>Action</th>
+<th>On key press</th>
+<th>On key release</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>`SetControls` @anchor set-controls-action-effects</th>
+<td>
+Enable any boolean controls that are specified in `controls` and not already
+enabled at the time of the key press.
+</td>
+<td>
+Disable any controls that were enabled by the corresponding key press.
+</td>
+</tr>
+<tr>
+<th>`LockControls` @anchor lock-controls-action-effects</th>
+<td>
+If `noLock` is false, locks and enables any boolean controls that are specified
+in `controls` and not already locked at the time of the key press.
+</td>
+<td>
+If `noUnlock` is False, key release unlocks and disables any controls that are
+specified in `controls` and *were* enabled at the time of the corresponding key
+press.
+</td>
+</tr>
+</tbody>
+</table>
 
 #### Server actions
 

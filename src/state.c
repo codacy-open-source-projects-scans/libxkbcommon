@@ -54,6 +54,8 @@ struct state_components {
     xkb_mod_mask_t mods; /**< effective */
 
     xkb_led_mask_t leds;
+
+    enum xkb_action_controls controls;
 };
 
 struct xkb_state {
@@ -78,6 +80,8 @@ struct xkb_state {
      */
     int16_t mod_key_count[XKB_MAX_MODS];
 
+    /* NOTE: if we ever add other flags types, we could merge them internally */
+    enum xkb_state_accessibility_flags flags;
     int refcnt;
     darray(struct xkb_filter) filters;
     struct xkb_keymap *keymap;
@@ -414,22 +418,20 @@ xkb_filter_group_latch_func(struct xkb_state *state,
              * Another key was pressed while we’ve still got the latching key
              * held down.
              *
-             * The exact behavior depends on the keymap format version.
+             * The exact behavior depends on the accessibility flag:
+             * XKB_STATE_A11Y_FLAG_LATCH_SIMULTANEOUS_KEYS.
+             *
              * It results in either:
              * • No change.
              * • Prevent the latch to trigger and keep the base group set by
              *   xkb_filter_group_latch_new(), until the latch key is
              *   released.
              */
-            if (state->keymap->format == XKB_KEYMAP_FORMAT_TEXT_V1) {
-                /* Keymap v1: unconditionally prevent the latch to trigger. */
-                latch = NO_LATCH;
-            }
-            else {
+            if (state->flags & XKB_STATE_A11Y_FLAG_LATCH_SIMULTANEOUS_KEYS) {
                 /*
-                 * Keymap v2+: prevent the latch to trigger only if some of the
-                 * pressed key’s actions breaks latches, mirroring the behavior
-                 * in the LATCH_PENDING state.
+                 * Prevent the latch to trigger only if some of the pressed
+                 * key’s actions breaks latches, mirroring the behavior in the
+                 * LATCH_PENDING state.
                  *
                  * This is an extension to the X11 XKB protocol.
                  */
@@ -441,6 +443,9 @@ xkb_filter_group_latch_func(struct xkb_state *state,
                         break;
                     }
                 }
+            } else {
+                /* Unconditionally prevent the latch to trigger. */
+                latch = NO_LATCH;
             }
         }
         else if (latch == LATCH_PENDING) {
@@ -448,11 +453,15 @@ xkb_filter_group_latch_func(struct xkb_state *state,
              * keypress, then either break the latch if any random key is
              * pressed, or promote it to a lock if it's the same group delta &
              * flags and latchToLock option is enabled. */
+            const bool sticky_keys = state->components.controls & CONTROL_STICKY_KEYS;
+            const enum xkb_action_flags flags = filter->action.group.flags &
+                                                ~ACTION_LATCH_TO_LOCK;
             for (xkb_action_count_t k = 0; k < count; k++) {
-                if (actions[k].type == ACTION_TYPE_GROUP_LATCH &&
-                    actions[k].group.group == filter->action.group.group &&
-                    actions[k].group.flags == filter->action.group.flags) {
-                    filter->action = actions[k];
+                if ((actions[k].type == ACTION_TYPE_GROUP_LATCH &&
+                     actions[k].group.group == filter->action.group.group &&
+                     actions[k].group.flags == filter->action.group.flags) ||
+                    (actions[k].type == ACTION_TYPE_GROUP_SET && sticky_keys &&
+                     actions[k].group.flags == flags)) {
                     if (filter->action.group.flags & ACTION_LATCH_TO_LOCK &&
                         filter->action.group.group != 0) {
                         /* Promote to lock */
@@ -676,21 +685,19 @@ xkb_filter_mod_latch_func(struct xkb_state *state,
              * Another key was pressed while we’ve still got the latching key
              * held down.
              *
-             * The exact behavior depends on the keymap format version.
+             * The exact behavior depends on the accessibility flag:
+             * XKB_STATE_A11Y_FLAG_LATCH_SIMULTANEOUS_KEYS.
+             *
              * It results in either:
              * • No change.
              * • Prevent the latch to trigger and keep the base modifiers set
              *   by xkb_filter_mod_latch_new(), until the latch key is released.
              */
-            if (state->keymap->format == XKB_KEYMAP_FORMAT_TEXT_V1) {
-                /* Keymap v1: unconditionally prevent the latch to trigger. */
-                latch = NO_LATCH;
-            }
-            else {
+            if (state->flags & XKB_STATE_A11Y_FLAG_LATCH_SIMULTANEOUS_KEYS) {
                 /*
-                 * Keymap v2+: prevent the latch to trigger only if some of the
-                 * pressed key’s actions breaks latches, mirroring the behavior
-                 * in the LATCH_PENDING state.
+                 * Prevent the latch to trigger only if some of the pressed
+                 * key’s actions breaks latches, mirroring the behavior in the
+                 * LATCH_PENDING state.
                  *
                  * This is an extension to the X11 XKB protocol.
                  */
@@ -702,6 +709,9 @@ xkb_filter_mod_latch_func(struct xkb_state *state,
                         break;
                     }
                 }
+            } else {
+                /* Unconditionally prevent the latch to trigger. */
+                latch = NO_LATCH;
             }
         }
         else if (latch == LATCH_PENDING) {
@@ -709,11 +719,15 @@ xkb_filter_mod_latch_func(struct xkb_state *state,
              * keypress, then either break the latch if any random key is pressed,
              * or promote it to a lock or plain base set if it's the same
              * modifier. */
+            const bool sticky_keys = state->components.controls & CONTROL_STICKY_KEYS;
+            const enum xkb_action_flags flags = filter->action.mods.flags &
+                                                ~ACTION_LATCH_TO_LOCK;
             for (xkb_action_count_t k = 0; k < count; k++) {
-                if (actions[k].type == ACTION_TYPE_MOD_LATCH &&
-                    actions[k].mods.flags == filter->action.mods.flags &&
+                if (((actions[k].type == ACTION_TYPE_MOD_LATCH &&
+                      actions[k].mods.flags == filter->action.mods.flags) ||
+                     (actions[k].type == ACTION_TYPE_MOD_SET && sticky_keys &&
+                      actions[k].mods.flags == flags)) &&
                     actions[k].mods.mods.mask == filter->action.mods.mods.mask) {
-                    filter->action = actions[k];
                     if (filter->action.mods.flags & ACTION_LATCH_TO_LOCK) {
                         /* Mutate the action to LockMods() */
                         filter->action.type = ACTION_TYPE_MOD_LOCK;
@@ -794,6 +808,73 @@ xkb_filter_mod_latch_func(struct xkb_state *state,
     return XKB_FILTER_CONTINUE;
 }
 
+static inline void
+clear_all_latches_and_locks(struct xkb_state *state)
+{
+    xkb_state_update_latched_locked(state,
+                                    (xkb_mod_mask_t) XKB_MOD_ALL, 0, true, 0,
+                                    (xkb_mod_mask_t) XKB_MOD_ALL, 0, true, 0);
+}
+
+
+static void
+xkb_filter_ctrls_new(struct xkb_state *state, struct xkb_filter *filter)
+{
+    if (filter->action.type == ACTION_TYPE_CTRL_SET) {
+        /* Set: save the specified controls that are *not* already enabled */
+        filter->priv = (uint32_t) (
+            (~state->components.controls) & filter->action.ctrls.ctrls
+        );
+    } else {
+        /* Lock: save the specified controls that *are* already enabled */
+        filter->priv = (uint32_t) (
+            state->components.controls & filter->action.ctrls.ctrls
+        );
+    }
+
+    if (filter->action.type == ACTION_TYPE_CTRL_SET ||
+        !(filter->action.ctrls.flags & ACTION_LOCK_NO_LOCK)) {
+        /* Enable the specified controls that are not already enabled */
+        state->components.controls |= filter->action.ctrls.ctrls;
+    }
+}
+
+static bool
+xkb_filter_ctrls_func(struct xkb_state *state, struct xkb_filter *filter,
+                      const struct xkb_key *key,
+                      enum xkb_key_direction direction)
+{
+    if (key != filter->key)
+        return XKB_FILTER_CONTINUE;
+
+    if (direction == XKB_KEY_DOWN) {
+        filter->refcnt++;
+        return XKB_FILTER_CONSUME;
+    }
+    if (--filter->refcnt > 0)
+        return XKB_FILTER_CONSUME;
+
+    if (filter->action.type == ACTION_TYPE_CTRL_SET ||
+        !(filter->action.ctrls.flags & ACTION_LOCK_NO_UNLOCK)) {
+        const enum xkb_action_controls old = state->components.controls;
+
+        /*
+         * Set: Disable specified controls that were *not* enabled at key press.
+         * Lock: Disable specified controls that *were* enabled at key press.
+         */
+        state->components.controls &= ~(enum xkb_action_controls) filter->priv;
+
+        if ((old & CONTROL_STICKY_KEYS) &&
+            !(state->components.controls & CONTROL_STICKY_KEYS)) {
+            /* Sticky keys were disabled: clear all locks and latches */
+            clear_all_latches_and_locks(state);
+        }
+    }
+
+    filter->func = NULL;
+    return XKB_FILTER_CONTINUE;
+}
+
 static const struct {
     void (*new)(struct xkb_state *state, struct xkb_filter *filter);
     bool (*func)(struct xkb_state *state, struct xkb_filter *filter,
@@ -811,6 +892,10 @@ static const struct {
                                   xkb_filter_group_latch_func },
     [ACTION_TYPE_GROUP_LOCK]  = { xkb_filter_group_lock_new,
                                   xkb_filter_group_lock_func },
+    [ACTION_TYPE_CTRL_SET]    = { xkb_filter_ctrls_new,
+                                  xkb_filter_ctrls_func },
+    [ACTION_TYPE_CTRL_LOCK]   = { xkb_filter_ctrls_new,
+                                  xkb_filter_ctrls_func },
 };
 
 /**
@@ -866,23 +951,113 @@ xkb_filter_apply_all(struct xkb_state *state,
         /* Add a new filter and run the corresponding initial action */
         filter = xkb_filter_new(state);
         filter->key = key;
-        filter->func = filter_action_funcs[actions[k].type].func;
         filter->action = actions[k];
-        filter_action_funcs[actions[k].type].new(state, filter);
+        if (state->components.controls & CONTROL_STICKY_KEYS) {
+            if (filter->action.type == ACTION_TYPE_MOD_SET) {
+                /* Convert modifier set action to a latch */
+                filter->action.type = ACTION_TYPE_MOD_LATCH;
+                if (state->flags & XKB_STATE_A11Y_FLAG_LATCH_TO_LOCK) {
+                    filter->action.mods.flags |= ACTION_LATCH_TO_LOCK;
+                }
+            } else if (filter->action.type == ACTION_TYPE_GROUP_SET) {
+                /* Convert group set action to a latch */
+                filter->action.type = ACTION_TYPE_GROUP_LATCH;
+                if (state->flags & XKB_STATE_A11Y_FLAG_LATCH_TO_LOCK) {
+                    filter->action.group.flags |= ACTION_LATCH_TO_LOCK;
+                }
+            }
+        }
+        filter->func = filter_action_funcs[filter->action.type].func;
+        filter_action_funcs[filter->action.type].new(state, filter);
     }
 }
 
+struct xkb_state_options {
+    enum xkb_state_accessibility_flags a11y_affect;
+    enum xkb_state_accessibility_flags a11y_flags;
+    struct xkb_context *ctx;
+};
+
+enum {
+    /** Mask to filter out invalid flags */
+    XKB_STATE_FLAG_ALL = (XKB_STATE_A11Y_FLAG_LATCH_TO_LOCK |
+                          XKB_STATE_A11Y_FLAG_LATCH_SIMULTANEOUS_KEYS),
+};
+
+#define state_options_new(context) {        \
+    .a11y_affect = XKB_STATE_A11Y_NO_FLAGS, \
+    .a11y_flags  = XKB_STATE_A11Y_NO_FLAGS, \
+    .ctx = (context)                        \
+}
+
+struct xkb_state_options *
+xkb_state_options_new(struct xkb_context *context)
+{
+    struct xkb_state_options* restrict const opt = calloc(1, sizeof(*opt));
+    if (!opt)
+        return NULL;
+
+    *opt = (struct xkb_state_options)
+           state_options_new(xkb_context_ref(context));
+
+    return opt;
+}
+
+void
+xkb_state_options_destroy(struct xkb_state_options *options)
+{
+    if (options == NULL)
+        return;
+    xkb_context_unref(options->ctx);
+    free(options);
+}
+
+int
+xkb_state_options_update_a11y_flags(struct xkb_state_options *options,
+                                    enum xkb_state_accessibility_flags affect,
+                                    enum xkb_state_accessibility_flags flags)
+{
+    if (affect & ~(enum xkb_state_accessibility_flags) XKB_STATE_FLAG_ALL) {
+        log_err_func(options->ctx, XKB_LOG_MESSAGE_NO_ID,
+                     "unrecognized state flags: %#x\n", flags);
+        return 1;
+    }
+
+    options->a11y_affect |= affect;
+    options->a11y_flags &= ~affect;
+    options->a11y_flags |= (flags & affect);
+
+    return 0;
+}
+
 struct xkb_state *
-xkb_state_new(struct xkb_keymap *keymap)
+xkb_state_new2(struct xkb_keymap *keymap,
+               const struct xkb_state_options *options)
 {
     struct xkb_state* restrict const state = calloc(1, sizeof(*state));
     if (!state)
         return NULL;
 
+    state->flags = options->a11y_flags;
+    if (keymap->format != XKB_KEYMAP_FORMAT_TEXT_V1 &&
+        !(options->a11y_affect & XKB_STATE_A11Y_FLAG_LATCH_SIMULTANEOUS_KEYS)) {
+            /* Keymap v2+: enable extension to XKB if not manually disabled */
+            state->flags |= XKB_STATE_A11Y_FLAG_LATCH_SIMULTANEOUS_KEYS;
+    }
+
     state->refcnt = 1;
     state->keymap = xkb_keymap_ref(keymap);
+    state->components.controls = keymap->enabled_ctrls;
 
     return state;
+}
+
+struct xkb_state *
+xkb_state_new(struct xkb_keymap *keymap)
+{
+    /* Default state options (context arg is unused) */
+    static const struct xkb_state_options options = state_options_new(NULL);
+    return xkb_state_new2(keymap, &options);
 }
 
 struct xkb_state *
@@ -977,7 +1152,7 @@ xkb_state_led_update_all(struct xkb_state *state)
             }
         }
 
-        if (led->ctrls & state->keymap->enabled_ctrls) {
+        if (led->ctrls & state->components.controls) {
             state->components.leds |= (UINT32_C(1) << idx);
             continue;
         }
@@ -1043,6 +1218,8 @@ get_state_component_changes(const struct state_components *a,
         mask |= XKB_STATE_MODS_LOCKED;
     if (a->leds != b->leds)
         mask |= XKB_STATE_LEDS;
+    if (a->controls != b->controls)
+        mask |= XKB_STATE_CONTROLS;
 
     return mask;
 }
@@ -1259,6 +1436,30 @@ xkb_state_update_latched_locked(struct xkb_state *state,
 
     xkb_state_update_derived(state);
     return get_state_component_changes(&prev_components, &state->components);
+}
+
+enum xkb_state_component
+xkb_state_update_controls(struct xkb_state *state,
+                          enum xkb_keyboard_controls affect,
+                          enum xkb_keyboard_controls controls)
+{
+    const struct state_components previous = state->components;
+    /*
+     * Enable to use the public API with the all the Control values, except
+     * the internal ones, if any.
+     */
+    const enum xkb_action_controls affect_ = (enum xkb_action_controls) affect
+                                           & CONTROL_ALL;
+    state->components.controls &= ~affect_;
+    state->components.controls |= (enum xkb_action_controls) controls & affect_;
+
+    if ((previous.controls & CONTROL_STICKY_KEYS) &&
+        !(state->components.controls & CONTROL_STICKY_KEYS)) {
+        /* Sticky keys were disabled: clear all locks and latches */
+        clear_all_latches_and_locks(state);
+    }
+
+    return get_state_component_changes(&previous, &state->components);
 }
 
 /**
@@ -1603,6 +1804,19 @@ xkb_state_serialize_layout(struct xkb_state *state,
         ret += state->components.locked_group;
 
     return ret;
+}
+
+enum xkb_keyboard_controls
+xkb_state_serialize_controls(struct xkb_state *state,
+                             enum xkb_state_component components)
+{
+    return (components & XKB_STATE_CONTROLS)
+        /*
+         * Enable to use the public API with the all the Controls values, except
+         * the internal ones, if any.
+         */
+        ? (enum xkb_keyboard_controls) (state->components.controls & CONTROL_ALL)
+        : 0;
 }
 
 /**
