@@ -48,6 +48,8 @@ struct keyboard {
 
     struct xkb_keymap *keymap;
     struct xkb_state *state;
+    struct xkb_state_machine *state_machine;
+    struct xkb_event_iterator *state_events;
     struct xkb_compose_state *compose_state;
     int32_t device_id;
 };
@@ -57,12 +59,12 @@ static bool terminate;
 static enum xkb_keymap_format keymap_format = DEFAULT_OUTPUT_KEYMAP_FORMAT;
 static enum xkb_keymap_serialize_flags serialize_flags =
     (enum xkb_keymap_serialize_flags) DEFAULT_KEYMAP_SERIALIZE_FLAGS;
-static bool const use_local_state = false;
-static struct xkb_keymap * const custom_keymap = NULL;
 #else
+static bool use_events_api = true;
 static enum print_state_options print_options = DEFAULT_PRINT_OPTIONS;
+static bool report_state_changes = true;
 static bool use_local_state = false;
-static struct xkb_state_options *state_options = NULL;
+static struct xkb_any_state_options any_state_options = { 0 };
 static enum xkb_keyboard_controls kbd_controls_affect = XKB_KEYBOARD_CONTROL_NONE;
 static enum xkb_keyboard_controls kbd_controls_values = XKB_KEYBOARD_CONTROL_NONE;
 static struct xkb_keymap *custom_keymap = NULL;
@@ -127,58 +129,77 @@ select_xkb_events_for_device(xcb_connection_t *conn, int32_t device_id)
 static int
 update_keymap(struct keyboard *kbd)
 {
-    struct xkb_keymap *new_keymap;
-
+#ifndef KEYMAP_DUMP
     if (custom_keymap) {
-        assert(use_local_state);
-        /* Keymap is set only the first time, then we only reference it. */
-        new_keymap = xkb_keymap_ref(custom_keymap);
-        /* Do not reset state if already defined */
-        if (!kbd->state) {
-            /* Ignore state from the server */
-#ifdef KEYMAP_DUMP
-            kbd->state = xkb_state_new(new_keymap);
-#else
-            kbd->state = xkb_state_new2(new_keymap, state_options);
-#endif
-            if (!kbd->state)
-                goto err_state;
+        if (!kbd->keymap) {
+            /* Keymap is only parsed the one time, then we just reference it. */
+            kbd->keymap = xkb_keymap_ref(custom_keymap);
         }
     } else {
-        new_keymap = xkb_x11_keymap_new_from_device(kbd->ctx, kbd->conn,
-                                                    kbd->device_id,
-                                                    XKB_KEYMAP_COMPILE_NO_FLAGS);
-        if (!new_keymap)
-            goto err_keymap;
-
-        /* Reset state on keymap reset.
-         * Ignore state from server if using local state. */
-        struct xkb_state * const new_state = (use_local_state)
-#ifdef KEYMAP_DUMP
-            ? xkb_state_new(new_keymap)
-#else
-            ? xkb_state_new2(new_keymap, state_options)
 #endif
-            : xkb_x11_state_new_from_device(new_keymap, kbd->conn,
-                                            kbd->device_id);
-        if (!new_state)
-            goto err_state;
+        const bool update = !!kbd->keymap && !!kbd->state;
+        xkb_keymap_unref(kbd->keymap);
+        kbd->keymap = xkb_x11_keymap_new_from_device(kbd->ctx, kbd->conn,
+                                                     kbd->device_id,
+                                                     XKB_KEYMAP_COMPILE_NO_FLAGS);
+        if (!kbd->keymap)
+            return -1;
 
-        if (kbd->keymap)
+        if (update)
             printf("Keymap updated!\n");
-
-        xkb_state_unref(kbd->state);
-        kbd->state = new_state;
+#ifndef KEYMAP_DUMP
     }
 
-    xkb_keymap_unref(kbd->keymap);
-    kbd->keymap = new_keymap;
-    return 0;
+    if (!use_local_state) {
+#endif
+        /* Reset state on keymap reset */
+        xkb_state_unref(kbd->state);
+        kbd->state = xkb_x11_state_new_from_device(kbd->keymap, kbd->conn,
+                                                   kbd->device_id);
+        if (!kbd->state)
+            return -1;
+#ifndef KEYMAP_DUMP
+    } else {
+        /* Ignore state from server and reset only if state if undefined. */
+        if (use_events_api) {
+            if (!kbd->state_machine) {
+                kbd->state_machine = xkb_state_machine_new(
+                    kbd->keymap, any_state_options.machine
+                );
+                if (!kbd->state_machine)
+                    return -1;
+            }
+            if (!kbd->state_events) {
+                kbd->state_events = xkb_event_iterator_new(kbd->state_machine);
+                if (!kbd->state_events)
+                    return -1;
+            }
+            if (!kbd->state) {
+                kbd->state = xkb_state_new(kbd->keymap);
+                if (!kbd->state)
+                    return -1;
+            }
+            const int ret = xkb_state_machine_update_controls(
+                kbd->state_machine, kbd->state_events,
+                kbd_controls_affect, kbd_controls_values
+            );
+            if (ret)
+                return ret;
+            const struct xkb_event *event;
+            while ((event = xkb_event_iterator_next(kbd->state_events))) {
+                xkb_state_update_from_event(kbd->state, event);
+            }
+        } else {
+            kbd->state = xkb_state_new2(kbd->keymap, any_state_options.state);
+            if (!kbd->state)
+                return -1;
+            xkb_state_update_controls(kbd->state,
+                                      kbd_controls_affect, kbd_controls_values);
+        }
+    }
+#endif
 
-err_state:
-    xkb_keymap_unref(new_keymap);
-err_keymap:
-    return -1;
+    return 0;
 }
 
 static int
@@ -222,6 +243,8 @@ init_kbd(struct keyboard *kbd, xcb_connection_t *conn, uint8_t first_xkb_event,
 
 err_state:
     xkb_state_unref(kbd->state);
+    xkb_state_machine_unref(kbd->state_machine);
+    xkb_event_iterator_destroy(kbd->state_events);
     xkb_compose_state_unref(kbd->compose_state);
     xkb_keymap_unref(kbd->keymap);
 err_out:
@@ -232,6 +255,8 @@ static void
 deinit_kbd(struct keyboard *kbd)
 {
     xkb_state_unref(kbd->state);
+    xkb_state_machine_unref(kbd->state_machine);
+    xkb_event_iterator_destroy(kbd->state_events);
     xkb_compose_state_unref(kbd->compose_state);
     xkb_keymap_unref(kbd->keymap);
 }
@@ -285,7 +310,8 @@ process_xkb_event(xcb_generic_event_t *gevent, struct keyboard *kbd)
                                   event->state_notify.baseGroup,
                                   event->state_notify.latchedGroup,
                                   event->state_notify.lockedGroup);
-        tools_print_state_changes(NULL, kbd->state, changed, print_options);
+        if (report_state_changes)
+            tools_print_state_changes(NULL, kbd->state, changed, print_options);
         break;
     }
 
@@ -301,31 +327,47 @@ process_event(xcb_generic_event_t *gevent, struct keyboard *kbd)
     switch (gevent->response_type) {
     case XCB_KEY_PRESS: {
         xcb_key_press_event_t *event = (xcb_key_press_event_t *) gevent;
-        xkb_keycode_t keycode = event->detail;
+        const xkb_keycode_t keycode = event->detail;
 
-        if (kbd->compose_state) {
-            xkb_keysym_t keysym = xkb_state_key_get_one_sym(kbd->state, keycode);
-            xkb_compose_state_feed(kbd->compose_state, keysym);
-        }
+        if (use_local_state && use_events_api) {
+            /* Run our local state machine with the event API */
+            const int ret = xkb_state_machine_update_key(kbd->state_machine,
+                                                         kbd->state_events,
+                                                         keycode, XKB_KEY_DOWN);
+            if (ret) {
+                fprintf(stderr, "ERROR: could not update the state machine\n");
+                // TODO: better error handling
+            } else {
+                tools_print_events(NULL, kbd->state, kbd->state_events,
+                                   kbd->compose_state, print_options,
+                                   report_state_changes);
+            }
+        } else {
+            if (kbd->compose_state) {
+                xkb_keysym_t keysym = xkb_state_key_get_one_sym(kbd->state,
+                                                                keycode);
+                xkb_compose_state_feed(kbd->compose_state, keysym);
+            }
 
-        tools_print_keycode_state(NULL, kbd->state, kbd->compose_state, keycode,
-                                  XKB_KEY_DOWN, XKB_CONSUMED_MODE_XKB,
-                                  print_options);
+            tools_print_keycode_state(NULL, kbd->state, kbd->compose_state,
+                                      keycode, XKB_KEY_DOWN,
+                                      XKB_CONSUMED_MODE_XKB, print_options);
 
-        if (kbd->compose_state) {
-            enum xkb_compose_status status =
-                xkb_compose_state_get_status(kbd->compose_state);
-            if (status == XKB_COMPOSE_CANCELLED ||
-                status == XKB_COMPOSE_COMPOSED)
-                xkb_compose_state_reset(kbd->compose_state);
-        }
-
-        if (use_local_state) {
-            /* Run our local state machine */
-            const enum xkb_state_component changed =
-                xkb_state_update_key(kbd->state, keycode, XKB_KEY_DOWN);
-            if (changed)
-                tools_print_state_changes(NULL, kbd->state, changed, print_options);
+            if (kbd->compose_state) {
+                enum xkb_compose_status status =
+                    xkb_compose_state_get_status(kbd->compose_state);
+                if (status == XKB_COMPOSE_CANCELLED ||
+                    status == XKB_COMPOSE_COMPOSED)
+                    xkb_compose_state_reset(kbd->compose_state);
+            }
+            if (use_local_state) {
+                /* Run our local state machine with the legacy API */
+                const enum xkb_state_component changed =
+                    xkb_state_update_key(kbd->state, keycode, XKB_KEY_DOWN);
+                if (changed && report_state_changes)
+                    tools_print_state_changes(NULL, kbd->state,
+                                              changed, print_options);
+            }
         }
 
         /* Exit on ESC. */
@@ -335,16 +377,32 @@ process_event(xcb_generic_event_t *gevent, struct keyboard *kbd)
     }
     case XCB_KEY_RELEASE: {
         xcb_key_press_event_t *event = (xcb_key_press_event_t *) gevent;
-        xkb_keycode_t keycode = event->detail;
-        tools_print_keycode_state(NULL, kbd->state, kbd->compose_state, keycode,
-                                  XKB_KEY_UP, XKB_CONSUMED_MODE_XKB,
-                                  print_options);
-        if (use_local_state) {
+        const xkb_keycode_t keycode = event->detail;
+        if (use_local_state && use_events_api) {
             /* Run our local state machine */
-            const enum xkb_state_component changed =
-                xkb_state_update_key(kbd->state, keycode, XKB_KEY_UP);
-            if (changed)
-                tools_print_state_changes(NULL, kbd->state, changed, print_options);
+            const int ret = xkb_state_machine_update_key(kbd->state_machine,
+                                                         kbd->state_events,
+                                                         keycode, XKB_KEY_UP);
+            if (ret) {
+                fprintf(stderr, "ERROR: could not update the state machine\n");
+                // TODO: better error handling
+            } else {
+                tools_print_events(NULL, kbd->state, kbd->state_events,
+                                   kbd->compose_state, print_options,
+                                   report_state_changes);
+            }
+        } else {
+            tools_print_keycode_state(NULL, kbd->state, kbd->compose_state,
+                                      keycode, XKB_KEY_UP,
+                                      XKB_CONSUMED_MODE_XKB, print_options);
+            if (use_local_state) {
+                /* Run our local state machine with the legacy API */
+                const enum xkb_state_component changed =
+                    xkb_state_update_key(kbd->state, keycode, XKB_KEY_UP);
+                if (changed && report_state_changes)
+                    tools_print_state_changes(NULL, kbd->state,
+                                              changed, print_options);
+            }
         }
         break;
     }
@@ -445,6 +503,7 @@ usage(FILE *fp, char *progname)
                 "    --enable-compose     enable Compose\n"
                 "    --local-state        enable local state handling and ignore modifiers/layouts\n"
                 "                         state updates from the X11 server\n"
+                "    --legacy-state-api   do not use the state event API. It implies --local-state.\n"
                 "    --controls [<CONTROLS>]\n"
                 "                         use the given keyboard controls; available values are:\n"
                 "                         sticky-keys, latch-to-lock and latch-simultaneous.\n"
@@ -460,6 +519,7 @@ usage(FILE *fp, char *progname)
 #else
                 "    -1, --uniline        enable uniline event output\n"
                 "    --multiline          enable multiline event output\n"
+                "    --no-state-report    do not report changes to the state\n"
 #endif
                 "    --verbose            enable verbose debugging output\n"
                 "    --help               display this help and exit\n"
@@ -490,10 +550,11 @@ main(int argc, char *argv[])
         fprintf(stderr, "Couldn't create xkb context\n");
         goto err_out;
     }
-    state_options = xkb_state_options_new(core_kbd.ctx);
+    any_state_options.state = xkb_state_options_new(core_kbd.ctx);
+    any_state_options.machine = xkb_state_machine_options_new(core_kbd.ctx);
     xkb_context_unref(core_kbd.ctx);
     core_kbd.ctx = NULL;
-    if (!state_options) {
+    if (!any_state_options.state || !any_state_options.machine) {
         ret = -1;
         fprintf(stderr, "Couldn't create xkb state options\n");
         goto err_out;
@@ -507,8 +568,10 @@ main(int argc, char *argv[])
         OPT_VERBOSE,
         OPT_UNILINE,
         OPT_MULTILINE,
+        OPT_NO_STATE_REPORT,
         OPT_COMPOSE,
         OPT_LOCAL_STATE,
+        OPT_LEGACY_STATE_API,
         OPT_CONTROLS,
         OPT_KEYMAP_FORMAT,
         OPT_KEYMAP_NO_PRETTY,
@@ -525,8 +588,10 @@ main(int argc, char *argv[])
 #else
         {"uniline",              no_argument,            0, OPT_UNILINE},
         {"multiline",            no_argument,            0, OPT_MULTILINE},
+        {"no-state-report",      no_argument,            0, OPT_NO_STATE_REPORT},
         {"enable-compose",       no_argument,            0, OPT_COMPOSE},
         {"local-state",          no_argument,            0, OPT_LOCAL_STATE},
+        {"legacy-state-api",     no_argument,            0, OPT_LEGACY_STATE_API},
         {"controls",             required_argument,      0, OPT_CONTROLS},
         {"keymap",               optional_argument,      0, OPT_KEYMAP},
 #endif
@@ -574,8 +639,11 @@ main(int argc, char *argv[])
 local_state:
             use_local_state = true;
             break;
+        case OPT_LEGACY_STATE_API:
+            use_events_api = false;
+            goto local_state;
         case OPT_CONTROLS:
-            if (!tools_parse_controls(optarg, state_options,
+            if (!tools_parse_controls(optarg, &any_state_options,
                                       &kbd_controls_affect,
                                       &kbd_controls_values)) {
                 goto invalid_usage;
@@ -602,6 +670,9 @@ local_state:
         case '*':
         case OPT_MULTILINE:
             print_options &= ~PRINT_UNILINE;
+            break;
+        case OPT_NO_STATE_REPORT:
+            report_state_changes = false;
             break;
 #endif
         case 'h':
@@ -747,7 +818,7 @@ err_out:
     ret = (ret >= 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 error_parse_args:
 #ifndef KEYMAP_DUMP
-    xkb_state_options_destroy(state_options);
+    xkb_any_state_options_destroy(&any_state_options);
 #endif
     exit(ret);
 }
