@@ -64,7 +64,7 @@ static bool use_events_api = true;
 static enum print_state_options print_options = DEFAULT_PRINT_OPTIONS;
 static bool report_state_changes = true;
 static bool use_local_state = false;
-static struct xkb_any_state_options any_state_options = { 0 };
+static struct xkb_state_machine_options * state_machine_options = NULL;
 static enum xkb_keyboard_controls kbd_controls_affect = XKB_KEYBOARD_CONTROL_NONE;
 static enum xkb_keyboard_controls kbd_controls_values = XKB_KEYBOARD_CONTROL_NONE;
 static struct xkb_keymap *custom_keymap = NULL;
@@ -161,22 +161,21 @@ update_keymap(struct keyboard *kbd)
 #ifndef KEYMAP_DUMP
     } else {
         /* Ignore state from server and reset only if state if undefined. */
+        if (!kbd->state) {
+            kbd->state = xkb_state_new(kbd->keymap);
+            if (!kbd->state)
+                return -1;
+        }
         if (use_events_api) {
             if (!kbd->state_machine) {
-                kbd->state_machine = xkb_state_machine_new(
-                    kbd->keymap, any_state_options.machine
-                );
+                kbd->state_machine =
+                    xkb_state_machine_new(kbd->keymap, state_machine_options);
                 if (!kbd->state_machine)
                     return -1;
             }
             if (!kbd->state_events) {
                 kbd->state_events = xkb_event_iterator_new(kbd->state_machine);
                 if (!kbd->state_events)
-                    return -1;
-            }
-            if (!kbd->state) {
-                kbd->state = xkb_state_new(kbd->keymap);
-                if (!kbd->state)
                     return -1;
             }
             const int ret = xkb_state_machine_update_controls(
@@ -190,9 +189,6 @@ update_keymap(struct keyboard *kbd)
                 xkb_state_update_from_event(kbd->state, event);
             }
         } else {
-            kbd->state = xkb_state_new2(kbd->keymap, any_state_options.state);
-            if (!kbd->state)
-                return -1;
             xkb_state_update_controls(kbd->state,
                                       kbd_controls_affect, kbd_controls_values);
         }
@@ -503,7 +499,9 @@ usage(FILE *fp, char *progname)
                 "    --enable-compose     enable Compose\n"
                 "    --local-state        enable local state handling and ignore modifiers/layouts\n"
                 "                         state updates from the X11 server\n"
-                "    --legacy-state-api   do not use the state event API. It implies --local-state.\n"
+                "    --legacy-state-api [=true|false]\n"
+                "                         use the legacy state API instead of the event API.\n"
+                "                         It implies --local-state.\n"
                 "    --controls [<CONTROLS>]\n"
                 "                         use the given keyboard controls; available values are:\n"
                 "                         sticky-keys, latch-to-lock and latch-simultaneous.\n"
@@ -550,13 +548,12 @@ main(int argc, char *argv[])
         fprintf(stderr, "Couldn't create xkb context\n");
         goto err_out;
     }
-    any_state_options.state = xkb_state_options_new(core_kbd.ctx);
-    any_state_options.machine = xkb_state_machine_options_new(core_kbd.ctx);
+    state_machine_options = xkb_state_machine_options_new(core_kbd.ctx);
     xkb_context_unref(core_kbd.ctx);
     core_kbd.ctx = NULL;
-    if (!any_state_options.state || !any_state_options.machine) {
+    if (!state_machine_options) {
         ret = -1;
-        fprintf(stderr, "Couldn't create xkb state options\n");
+        fprintf(stderr, "Couldn't create xkb state machine options\n");
         goto err_out;
     }
 
@@ -591,7 +588,7 @@ main(int argc, char *argv[])
         {"no-state-report",      no_argument,            0, OPT_NO_STATE_REPORT},
         {"enable-compose",       no_argument,            0, OPT_COMPOSE},
         {"local-state",          no_argument,            0, OPT_LOCAL_STATE},
-        {"legacy-state-api",     no_argument,            0, OPT_LEGACY_STATE_API},
+        {"legacy-state-api",     optional_argument,      0, OPT_LEGACY_STATE_API},
         {"controls",             required_argument,      0, OPT_CONTROLS},
         {"keymap",               optional_argument,      0, OPT_KEYMAP},
 #endif
@@ -639,16 +636,23 @@ main(int argc, char *argv[])
 local_state:
             use_local_state = true;
             break;
-        case OPT_LEGACY_STATE_API:
-            use_events_api = false;
-            goto local_state;
+        case OPT_LEGACY_STATE_API: {
+            bool legacy_api = true;
+            if (!tools_parse_bool(optarg, TOOLS_ARG_OPTIONAL, &legacy_api))
+                goto invalid_usage;
+            use_events_api = !legacy_api;
+            if (use_events_api)
+                goto local_state;
+            break;
+        }
         case OPT_CONTROLS:
-            if (!tools_parse_controls(optarg, &any_state_options,
+            if (!tools_parse_controls(optarg, state_machine_options,
                                       &kbd_controls_affect,
                                       &kbd_controls_values)) {
                 goto invalid_usage;
             }
-            /* --local-state is implied */
+            /* --local-state and --legacy-state-api=false are implied */
+            use_events_api = true;
             goto local_state;
         case OPT_KEYMAP:
             with_keymap_file = true;
@@ -818,7 +822,7 @@ err_out:
     ret = (ret >= 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 error_parse_args:
 #ifndef KEYMAP_DUMP
-    xkb_any_state_options_destroy(&any_state_options);
+    xkb_state_machine_options_destroy(state_machine_options);
 #endif
     exit(ret);
 }

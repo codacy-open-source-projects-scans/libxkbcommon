@@ -1962,6 +1962,12 @@ xkb_keymap_key_repeats(struct xkb_keymap *keymap, xkb_keycode_t key);
  * This is the recommended API for **server** applications. It enables the full
  * feature set that libxkbcommon supports.
  *
+ * This API enables to generate a sequence of [events][event] corresponding to
+ * *atomic* state changes, contrary to the `xkb_state` API that cannot generate
+ * events. Additionally, the event API supports events other than state
+ * components changes, such as keys events, so that it enables to handle most of
+ * the XKB [key actions](@ref key-action-def).
+ *
  * See the [example for a Wayland server](@ref quick-guide-wayland-server)
  * in the quick guide.
  *
@@ -1984,6 +1990,8 @@ xkb_keymap_key_repeats(struct xkb_keymap *keymap, xkb_keycode_t key);
  * </dl>
  *
  * @endparblock
+ *
+ * [event]: @ref xkb_event
  */
 
 /**
@@ -2024,8 +2032,7 @@ xkb_state_machine_options_destroy(struct xkb_state_machine_options *options);
 /**
  * @enum xkb_state_accessibility_flags
  * Flags for
- * `xkb_state_machine_options::xkb_state_machine_options_update_a11y_flags()`
- * and `xkb_state_options::xkb_state_options_update_a11y_flags()`.
+ * `xkb_state_machine_options::xkb_state_machine_options_update_a11y_flags()`.
  *
  * @since 1.14.0
  */
@@ -2410,6 +2417,10 @@ struct xkb_event_iterator;
 /**
  * Create an event iterator object.
  *
+ * @param sm The state machine that produces the event of the iterator.
+ *
+ * @returns A new event iterator object, or `NULL` on failure.
+ *
  * @since 1.14.0
  *
  * @sa `xkb_event_iterator_destroy()`
@@ -2422,6 +2433,10 @@ xkb_event_iterator_new(struct xkb_state_machine *sm);
 /**
  * Free an event iterator object.
  *
+ * @param events
+ *     The event iterator to free.
+ *     If it is `NULL`, this function does nothing.
+ *
  * @since 1.14.0
  *
  * @sa `xkb_event_iterator_new()`
@@ -2433,6 +2448,10 @@ xkb_event_iterator_destroy(struct xkb_event_iterator *events);
 
 /**
  * Get the next event queued in an event iterator object.
+ *
+ * @param events The event iterator.
+ *
+ * @returns The next event, or `NULL` if the queue is empty.
  *
  * @since 1.14.0
  *
@@ -2621,98 +2640,19 @@ xkb_state_machine_update_latched_locked(struct xkb_state_machine *sm,
                                         bool affect_locked_layout,
                                         int32_t locked_layout);
 
-
-/**
- * @struct xkb_state_options
- * Opaque options object to configure a keyboard state.
- *
- * @since 1.14.0
- */
-struct xkb_state_options;
-
-/**
- * Create a new keyboard state object options.
- *
- * @param context The context in which to create the options.
- *
- * @returns A new keyboard state options object, or `NULL` on failure.
- *
- * @since 1.14.0
- *
- * @memberof xkb_state_options
- */
-XKB_EXPORT struct xkb_state_options *
-xkb_state_options_new(struct xkb_context *context);
-
-/**
- * Free a keyboard state options object.
- *
- * @param options The state options. If it is `NULL`, this function does nothing.
- *
- * @since 1.14.0
- *
- * @memberof xkb_state_options
- */
-XKB_EXPORT void
-xkb_state_options_destroy(struct xkb_state_options *options);
-
-/**
- * Update the accessibility flags of a state options object.
- *
- * @param options The state options object to modify.
- * @param affect  See @p flags.
- * @param flags   Accessibility flags to set or unset. Only the flags in
- * @p affect are considered.
- *
- * @returns 0 on success, otherwise an error code.
- *
- * @since 1.14.0
- *
- * @memberof xkb_state_options
- */
-XKB_EXPORT int
-xkb_state_options_update_a11y_flags(struct xkb_state_options *options,
-                                    enum xkb_state_accessibility_flags affect,
-                                    enum xkb_state_accessibility_flags flags);
-
 /**
  * Create a new keyboard state object.
  *
  * This entry point is intended for both server and client applications.
- * However, *server* applications may prefer to use `xkb_state_new2()` to get
- * more control over the state configuration.
  *
  * @param keymap The keymap which the state will use.
  *
  * @returns A new keyboard state object, or `NULL` on failure.
  *
- * @sa `xkb_state_new2()`
- *
  * @memberof xkb_state
  */
 XKB_EXPORT struct xkb_state *
 xkb_state_new(struct xkb_keymap *keymap);
-
-/**
- * Create a new keyboard state object with explicit options.
- *
- * This entry point is intended for *server* applications; *client* applications
- * should use `xkb_state_new()` instead.
- *
- * @param keymap  The keymap which the state will use.
- * @param options The options to configure the state.
- *
- * @returns A new keyboard state object, or `NULL` on failure.
- *
- * @sa `xkb_state_new()`
- *
- * @since 1.14.0
- *
- * @memberof xkb_state
- */
-XKB_EXPORT struct xkb_state *
-xkb_state_new2(struct xkb_keymap *keymap,
-               const struct xkb_state_options *options);
 
 /**
  * Take a new reference on a keyboard state object.
