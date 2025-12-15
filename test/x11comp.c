@@ -4,6 +4,7 @@
  */
 
 #include "config.h"
+#include "test-config.h"
 
 #include <assert.h>
 #include <getopt.h>
@@ -415,9 +416,14 @@ X11_TEST(test_basic)
         free(keymap_path);
     }
 
+    /* Reject invalid flags */
+    assert(!xkb_x11_keymap_new_from_device(ctx, conn, device_id, -1));
+    assert(!xkb_x11_keymap_new_from_device(ctx, conn, device_id, 0xffff));
+
     struct xkb_keymap *keymap =
         xkb_x11_keymap_new_from_device(ctx, conn, device_id,
                                        XKB_KEYMAP_COMPILE_NO_FLAGS);
+    assert(keymap);
 
     /* Check capitalization transformation */
     struct xkb_state *state =

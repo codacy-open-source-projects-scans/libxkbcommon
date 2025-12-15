@@ -4,6 +4,7 @@
  */
 
 #include "config.h"
+#include "test-config.h"
 
 #include <stdlib.h>
 
@@ -32,6 +33,16 @@ X11_TEST(test_basic)
         exit_code = TEST_SETUP_FAILURE;
         goto err_conn;
     }
+
+    /* Reject invalid flags */
+    assert(!xkb_x11_setup_xkb_extension(conn,
+                                        XKB_X11_MIN_MAJOR_XKB_VERSION,
+                                        XKB_X11_MIN_MINOR_XKB_VERSION,
+                                        -1, NULL, NULL, NULL, NULL));
+    assert(!xkb_x11_setup_xkb_extension(conn,
+                                        XKB_X11_MIN_MAJOR_XKB_VERSION,
+                                        XKB_X11_MIN_MINOR_XKB_VERSION,
+                                        0xffff, NULL, NULL, NULL, NULL));
 
     ret = xkb_x11_setup_xkb_extension(conn,
                                       XKB_X11_MIN_MAJOR_XKB_VERSION,

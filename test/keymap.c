@@ -6,6 +6,7 @@
  */
 
 #include "config.h"
+#include "test-config.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -149,6 +150,15 @@ test_keymap(void)
     xkb_mod_mask_t mod2_mask;
 
     assert(context);
+
+    /* Reject unsupported flags */
+    static const struct xkb_rule_names names = {NULL, NULL, NULL, NULL, NULL};
+    assert(!xkb_keymap_new_from_names(context, &names, -1));
+    assert(!xkb_keymap_new_from_names(context, &names, 0xffff));
+    assert(!xkb_keymap_new_from_names2(context, &names,
+                                       XKB_KEYMAP_FORMAT_TEXT_V1, -1));
+    assert(!xkb_keymap_new_from_names2(context, &names,
+                                       XKB_KEYMAP_FORMAT_TEXT_V1, 0xffff));
 
     keymap = test_compile_rules(context, XKB_KEYMAP_FORMAT_TEXT_V1, "evdev",
                                 "pc104", "us,ru", NULL, "grp:menu_toggle");
@@ -783,6 +793,10 @@ test_key_iterator(void)
         );
         assert(keymap);
 
+        /* Reject invalid flags */
+        assert(!xkb_keymap_key_iterator_new(keymap, -1));
+        assert(!xkb_keymap_key_iterator_new(keymap, 0xffff));
+
         static const enum xkb_keymap_key_iterator_flags flags[] = {
             XKB_KEYMAP_KEY_ITERATOR_NO_FLAGS,
             XKB_KEYMAP_KEY_ITERATOR_DESCENDING_ORDER,
@@ -842,6 +856,31 @@ test_key_iterator(void)
     xkb_context_unref(context);
 }
 
+/*
+ * Github issue 934: commit b09aa7c6d8440e1690619239fe57e5f12374af0d introduced
+ * a segfault while trying to optimize key aliases allocation.
+ */
+static void
+test_issue_934(void)
+{
+    struct xkb_keymap *keymap;
+    struct xkb_context *context = test_get_context(CONTEXT_NO_FLAG);
+    assert(context);
+
+    keymap = test_compile_rules(context, XKB_KEYMAP_FORMAT_TEXT_V1,
+                                "base", "pc104", "us", NULL, NULL);
+    assert(keymap);
+    xkb_keymap_unref(keymap);
+
+    /* Would segfaulted before */
+    keymap = test_compile_rules(context, XKB_KEYMAP_FORMAT_TEXT_V1,
+                                "evdev", "pc104", "us", NULL, NULL);
+    assert(keymap);
+    xkb_keymap_unref(keymap);
+
+    xkb_context_unref(context);
+}
+
 int
 main(void)
 {
@@ -856,6 +895,7 @@ main(void)
     test_multiple_actions_per_level();
     test_keynames_atoms();
     test_key_iterator();
+    test_issue_934();
 
     return EXIT_SUCCESS;
 }
