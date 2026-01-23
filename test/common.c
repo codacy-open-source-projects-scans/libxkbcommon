@@ -20,13 +20,6 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#ifdef _WIN32
-#include <io.h>
-#include <windows.h>
-#else
-#include <unistd.h>
-#include <termios.h>
-#endif
 
 #include "xkbcommon/xkbcommon.h"
 
@@ -79,7 +72,7 @@ print_detailed_state(struct xkb_state *state)
         if (xkb_state_led_index_is_active(state, led) > 0)
             leds |= UINT32_C(1) << led;
     }
-    fprintf(stderr, "  LEDs: 0x%x\n", leds);
+    fprintf(stderr, "  LEDs: 0x%"PRIx32"\n", leds);
 }
 
 /*
