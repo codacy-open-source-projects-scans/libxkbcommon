@@ -528,6 +528,20 @@ Unused in [xkeyboard-config] layouts.
 </details>
 </td>
 </tr>
+<!-- Keyboard emulation actions -->
+<tr>
+<th>Keyboard emulation</th>
+<th>`RedirectKey()`</th>
+<td>✅ Full support</td>
+<td colspan="2">
+<details>
+<summary>✅ Full support (since 1.14)</summary>
+- libxkbcommon \< 1.14: Parsing only.
+- libxkbcommon ≥ 1.14: Full support. Note that the API support requires using
+  the `xkb_state_machine` API.
+</details>
+</td>
+</tr>
 <!-- Legacy actions -->
 <tr>
 <th rowspan="7">Legacy action</th>
@@ -567,12 +581,7 @@ Unused in [xkeyboard-config] layouts.
 </tr>
 <!-- Unsupported actions -->
 <tr>
-<th rowspan="6">Unsupported legacy action</th>
-<th>`RedirectKey()`</th>
-<td>✅ Full support</td>
-<td colspan="2">❌️ Parsing only</td>
-</tr>
-<tr>
+<th rowspan="5">Unsupported legacy action</th>
 <th>`ISOLock()`</th>
 <td>✅ Full support</td>
 <td colspan="2">❌️ Parsing only</td>
@@ -668,6 +677,29 @@ corresponding keysyms. An empty string denotes the keysym `NoSymbol`.
 `\u{NNNN}`.
 
 See @ref keymap-string-literal "string literal" for further information.
+</details>
+</td>
+</tr>
+<tr>
+<th>`First`/`Last` group indices and masks constants</th>
+<td>❌️ No support</td>
+<td colspan="2">
+<details>
+<summary>✅ Full support (since 1.14)</summary>
+Enable to define e.g. a proper interpretation entry of the keysym `ISO_Last_Group`:
+
+```c
+interpret ISO_Last_Group {
+    action= LockGroup(group=last);
+};
+```
+
+Note that contrary to `First`, `Last` cannot be used as an *array* index, i.e.
+`symbols[Last]` will be discarded or raise an error, depending of the API used.
+<!-- NOTE: It may only work if using the RMLVO API with *one* layout -->
+
+These constants are parsed but never used for *serialization*, in order to
+maintain compatibility with xkbcomp and older libxkbcommon versions.
 </details>
 </td>
 </tr>

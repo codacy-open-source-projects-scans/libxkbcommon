@@ -64,7 +64,7 @@ typedef struct {
     ActionsInfo default_actions;
     struct xkb_mod_set mods;
 
-    enum xkb_keymap_format format;
+    const struct xkb_keymap_info *keymap_info;
     struct xkb_context *ctx;
 } CompatInfo;
 
@@ -142,13 +142,12 @@ InitLED(LedInfo *info)
 }
 
 static void
-InitCompatInfo(CompatInfo *info, struct xkb_context *ctx,
-               unsigned int include_depth, enum xkb_keymap_format format,
-               const struct xkb_mod_set *mods)
+InitCompatInfo(CompatInfo *info, const struct xkb_keymap_info *keymap_info,
+               unsigned int include_depth, const struct xkb_mod_set *mods)
 {
     memset(info, 0, sizeof(*info));
-    info->ctx = ctx;
-    info->format = format;
+    info->ctx = keymap_info->keymap.ctx;
+    info->keymap_info = keymap_info;
     info->include_depth = include_depth;
     InitActionsInfo(&info->default_actions);
     InitVMods(&info->mods, mods, include_depth > 0);
@@ -333,6 +332,7 @@ MergeLedMap(CompatInfo *info, LedInfo *old, LedInfo *new, bool same_file)
     const bool report = (same_file && verbosity > 0) || verbosity > 9;
 
     if (old->led.mods.mods == new->led.mods.mods &&
+        old->led.pending_groups == new->led.pending_groups &&
         old->led.groups == new->led.groups &&
         old->led.ctrls == new->led.ctrls &&
         old->led.which_mods == new->led.which_mods &&
@@ -362,6 +362,7 @@ MergeLedMap(CompatInfo *info, LedInfo *old, LedInfo *new, bool same_file)
                        clobber, report, &collide)) {
         old->led.which_groups = new->led.which_groups;
         old->led.groups = new->led.groups;
+        old->led.pending_groups = new->led.pending_groups;
         old->defined |= LED_FIELD_GROUPS;
     }
     if (UseNewLEDField(LED_FIELD_CTRLS, old->defined, new->defined,
@@ -458,8 +459,8 @@ HandleIncludeCompatMap(CompatInfo *info, IncludeStmt *include)
         return false;
     }
 
-    InitCompatInfo(&included, info->ctx, info->include_depth + 1,
-                   info->format, &info->mods);
+    InitCompatInfo(&included, info->keymap_info, info->include_depth + 1,
+                   &info->mods);
     included.name = steal(&include->stmt);
 
     for (IncludeStmt *stmt = include; stmt; stmt = stmt->next_incl) {
@@ -475,8 +476,8 @@ HandleIncludeCompatMap(CompatInfo *info, IncludeStmt *include)
             return false;
         }
 
-        InitCompatInfo(&next_incl, info->ctx, info->include_depth + 1,
-                       info->format, &included.mods);
+        InitCompatInfo(&next_incl, info->keymap_info, info->include_depth + 1,
+                       &included.mods);
         next_incl.default_interp = info->default_interp;
         next_incl.default_led = info->default_led;
 
@@ -524,9 +525,8 @@ SetInterpField(CompatInfo *info, SymInterpInfo *si, const char *field,
             for (ExprDef *act = value->actions.actions;
                  act; act = (ExprDef *) act->common.next) {
                 union xkb_action toAct = { 0 };
-                if (!HandleActionDef(info->ctx, info->format,
-                                     &info->default_actions, &info->mods,
-                                     act, &toAct)) {
+                if (!HandleActionDef(info->keymap_info, &info->default_actions,
+                                     &info->mods, act, &toAct)) {
                     darray_free(actions);
                     return false;
                 }
@@ -559,9 +559,8 @@ SetInterpField(CompatInfo *info, SymInterpInfo *si, const char *field,
                 darray_steal(actions, &si->interp.a.actions, NULL);
             }
         }
-        else if (HandleActionDef(info->ctx, info->format,
-                                 &info->default_actions, &info->mods,
-                                 value, &si->interp.a.action))
+        else if (HandleActionDef(info->keymap_info, &info->default_actions,
+                                 &info->mods, value, &si->interp.a.action))
             si->interp.num_actions =
                 (si->interp.a.action.type != ACTION_TYPE_NONE);
         else
@@ -622,8 +621,9 @@ SetInterpField(CompatInfo *info, SymInterpInfo *si, const char *field,
 
 static bool
 SetLedMapField(CompatInfo *info, LedInfo *ledi, const char *field,
-               ExprDef *arrayNdx, ExprDef *value)
+               ExprDef *arrayNdx, ExprDef **value_ptr)
 {
+    ExprDef * restrict const value = *value_ptr;
     bool ok = true;
 
     if (istreq(field, "modifiers") || istreq(field, "mods")) {
@@ -637,14 +637,35 @@ SetLedMapField(CompatInfo *info, LedInfo *ledi, const char *field,
         ledi->defined |= LED_FIELD_MODS;
     }
     else if (istreq(field, "groups")) {
-        uint32_t mask = 0;
+        xkb_layout_mask_t mask = 0;
 
         if (arrayNdx)
             return ReportLedNotArray(info, ledi, field);
 
-        const xkb_layout_index_t max_groups = format_max_groups(info->format);
-        if (!ExprResolveGroupMask(info->ctx, max_groups, value, &mask))
-            return ReportLedBadType(info, ledi, field, "group mask");
+        bool pending = false;
+        if (!ExprResolveGroupMask(info->keymap_info, value, &mask, &pending)) {
+            if (pending) {
+                ledi->led.pending_groups = true;
+                const darray_size_t pending_index =
+                    darray_size(*info->keymap_info->pending_computations);
+                darray_append(
+                    *info->keymap_info->pending_computations,
+                    (struct pending_computation) {
+                        .expr = *value_ptr,
+                        .computed = false,
+                        .value = 0,
+                    }
+                );
+                *value_ptr = NULL;
+                static_assert(sizeof(pending_index) == sizeof(mask),
+                              "Cannot save pending computation");
+                mask = pending_index;
+            } else {
+                return ReportLedBadType(info, ledi, field, "group mask");
+            }
+        } else {
+            ledi->led.pending_groups = false;
+        }
 
         ledi->led.groups = mask;
         ledi->defined |= LED_FIELD_GROUPS;
@@ -746,14 +767,13 @@ HandleGlobalVar(CompatInfo *info, VarDef *stmt)
         temp.merge = (temp.merge == MERGE_REPLACE)
             ? MERGE_OVERRIDE
             : stmt->merge;
-        ret = SetLedMapField(info, &temp, field, ndx, stmt->value);
+        ret = SetLedMapField(info, &temp, field, ndx, &stmt->value);
         MergeLedMap(info, &info->default_led, &temp, true);
     }
     else if (elem) {
-        ret = SetDefaultActionField(info->ctx, info->format,
-                                    &info->default_actions, &info->mods,
-                                    elem, field, ndx,
-                                    stmt->value, stmt->merge);
+        ret = SetDefaultActionField(info->keymap_info, &info->default_actions,
+                                    &info->mods, elem, field, ndx,
+                                    &stmt->value, stmt->merge);
     } else {
         log_err(info->ctx, XKB_ERROR_UNKNOWN_DEFAULT_FIELD,
                 "Default defined for unknown field \"%s\"; Ignored\n", field);
@@ -848,7 +868,7 @@ HandleLedMapDef(CompatInfo *info, LedMapDef *def)
             ok = false;
         }
         else {
-            ok = SetLedMapField(info, &ledi, field, arrayNdx, var->value) && ok;
+            ok = SetLedMapField(info, &ledi, field, arrayNdx, &var->value) && ok;
         }
     }
 
@@ -969,9 +989,10 @@ CopyLedMapDefsToKeymap(struct xkb_keymap *keymap, CompatInfo *info)
         }
 
         *led = ledi->led;
-        if (led->groups != 0 && led->which_groups == 0)
+        /* Assume pending `groups` computation does not result in 0 */
+        if (led->which_groups == 0 && (led->groups != 0 || led->pending_groups))
             led->which_groups = XKB_STATE_LAYOUT_EFFECTIVE;
-        if (led->mods.mods != 0 && led->which_mods == 0)
+        if (led->which_mods == 0 && led->mods.mods != 0)
             led->which_mods = XKB_STATE_MODS_EFFECTIVE;
     }
 }
@@ -1010,11 +1031,11 @@ CopyCompatToKeymap(struct xkb_keymap *keymap, CompatInfo *info)
 }
 
 bool
-CompileCompatMap(XkbFile *file, struct xkb_keymap *keymap)
+CompileCompatMap(XkbFile *file, struct xkb_keymap_info *keymap_info)
 {
     CompatInfo info;
 
-    InitCompatInfo(&info, keymap->ctx, 0, keymap->format, &keymap->mods);
+    InitCompatInfo(&info, keymap_info, 0, &keymap_info->keymap.mods);
 
     if (file != NULL)
         HandleCompatMapFile(&info, file);
@@ -1022,7 +1043,7 @@ CompileCompatMap(XkbFile *file, struct xkb_keymap *keymap)
     if (info.errorCount != 0)
         goto err_info;
 
-    if (!CopyCompatToKeymap(keymap, &info))
+    if (!CopyCompatToKeymap(&keymap_info->keymap, &info))
         goto err_info;
 
     ClearCompatInfo(&info);

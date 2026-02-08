@@ -1577,7 +1577,88 @@ test_group_indices_names(struct xkb_context *ctx, bool update_output_files)
                 "};",
             .expected_v1 = NULL,
             .expected_v2 = NULL
-        }
+        },
+        /* First and Last: test default values */
+        {
+            .keymap =
+                "xkb_keymap {\n"
+                "  xkb_compat {\n"
+                "    interpret ISO_First_Group {\n"
+                "      action= LockGroup(group=First);\n"
+                "    };\n"
+                "    interpret ISO_Last_Group {\n"
+                "      action= LockGroup(group=Last);\n"
+                "    };\n"
+                "    indicator \"First group\" {\n"
+                "      groups = First;\n"
+                "    };\n"
+                "    indicator \"Last group\" {\n"
+                "      groups = Last;\n"
+                "    };\n"
+                "  };\n"
+                "};",
+            .expected_v1 = GOLDEN_TESTS_OUTPUTS "group-index-names-3.xkb",
+            .expected_v2 = GOLDEN_TESTS_OUTPUTS "group-index-names-3.xkb",
+        },
+        /* First and Last: test all properties */
+        {
+            .keymap =
+                "xkb_keymap {\n"
+                "  xkb_keycodes { <> = 1; };\n"
+                "  xkb_compat {\n"
+                "    SetGroup.group = Last;\n"
+                "    interpret ISO_First_Group {\n"
+                "      action= LockGroup(group=First);\n"
+                "    };\n"
+                "    interpret ISO_Last_Group {\n"
+                "      action= SetGroup();\n"
+                "    };\n"
+                "    indicator \"Later groups\" {\n"
+                "      groups = All - First;\n"
+                "    };\n"
+                "    indicator \"Last group\" {\n"
+                "      groups = Last;\n"
+                "    };\n"
+                "    indicator \"All but last group\" {\n"
+                "      groups = All - Last;\n"
+                "    };\n"
+                "    indicator \"Y\" {\n"
+                "      groups = Last + First;\n"
+                "    };\n"
+                "  };\n"
+                "  xkb_types {\n"
+                "    type \"ONE_LEVEL\" {};\n"
+                "    type \"TWO_LEVEL\" {\n"
+                "      modifiers = Shift;\n"
+                "      map[Shift] = 2;\n"
+                "    };\n"
+                "  };"
+                "  xkb_symbols {\n"
+                "    name[first] = \"1\";\n"
+                "    SetGroup.group = +(Last + 1);\n"
+                "    key.groupsRedirect = Last;\n"
+                "    key <> {\n"
+                "      symbols[FIRST] = [1],\n"
+                "      actions[First] = [SetGroup(group=Last), SetGroup(group=-Last)],\n"
+                "      symbols[2]     = [2],\n"
+                "      actions[2]     = [SetGroup(group=Last - First), SetGroup()],\n"
+                "      actions[3]     = [SetGroup(group=First), SetGroup(group=-First)]\n"
+                "    };\n"
+                "  };\n"
+                "};",
+            .expected_v1 = GOLDEN_TESTS_OUTPUTS "group-index-names-4.xkb",
+            .expected_v2 = GOLDEN_TESTS_OUTPUTS "group-index-names-4.xkb",
+        },
+        /* “Last” is not supported as a group index */
+        {
+            .keymap =
+                "xkb_keymap {\n"
+                "  xkb_keycodes { <> = 1; };\n"
+                "  xkb_symbols { key <> { symbols[Last] = [a] }; };\n"
+                "};",
+            .expected_v1 = NULL,
+            .expected_v2 = NULL
+        },
     };
 
     for (unsigned int k = 0; k < ARRAY_SIZE(keymaps); k++) {
@@ -2499,6 +2580,36 @@ test_keymap_from_rules(struct xkb_context *ctx)
 }
 
 static void
+test_redirect_key(struct xkb_context *ctx, bool update_output_files)
+{
+    const struct keymap_test_data tests[] = {
+        {
+            .keymap =
+                "xkb_keymap {\n"
+                "  xkb_keycodes { <A> = 38; <S> = 39; <D> = 40; };\n"
+                "  xkb_symbols {\n"
+                /* Inexistent key */
+                "    key <A> { [RedirectKey(key=<?>)] };\n"
+                /* Multiple RedirectKey() on the same level */
+                "    key <S> { [RedirectKey(key=<A>), RedirectKey(key=<D>)] };\n"
+                /* OK! */
+                "    key <D> { [RedirectKey(key=<S>,mods=Shift,clearMods=Control)] };\n"
+                "  };\n"
+                "};",
+            .expected = GOLDEN_TESTS_OUTPUTS "redirect-key-1.xkb"
+        },
+    };
+    for (unsigned int t = 0; t < ARRAY_SIZE(tests); t++) {
+        fprintf(stderr, "------\n*** %s: #%u ***\n", __func__, t);
+        assert(test_compile_output(ctx, XKB_KEYMAP_FORMAT_TEXT_V1,
+                                   XKB_KEYMAP_USE_ORIGINAL_FORMAT,
+                                   compile_buffer, NULL, __func__,
+                                   tests[t].keymap, strlen(tests[t].keymap),
+                                   tests[t].expected, update_output_files));
+    }
+}
+
+static void
 test_unsupported_legacy_x11_actions(struct xkb_context *ctx,
                                     bool update_output_files)
 {
@@ -2510,11 +2621,8 @@ test_unsupported_legacy_x11_actions(struct xkb_context *ctx,
         "    <3> = 3;\n"
         "    <4> = 4;\n"
         "    <5> = 5;\n"
-        "    <6> = 6;\n"
         "  };\n"
         "  xkb_compat {\n"
-        "    RedirectKey.key = <1>;\n"
-        "    RedirectKey.data = <1>;\n" /* invalid field */
         "    ISOLock.modifiers = modMapMods;\n"
         "    DeviceButton.data = <1>;\n" /* invalid field */
         "    LockDeviceButton.data = <1>;\n" /* invalid field */
@@ -2523,17 +2631,25 @@ test_unsupported_legacy_x11_actions(struct xkb_context *ctx,
         "    interpret ISO_Lock {\n"
         "      action=ISOLock(affect=all);\n"
         "    };\n"
-        "    interpret VoidSymbol {\n"
-        "      action=RedirectKey(data=<1>);\n" /* invalid field */
+        "    interpret 0x10000 {\n"
+        "      action=DeviceButton(data=all);\n" /* invalid field */
+        "    };\n"
+        "    interpret 0x10001 {\n"
+        "      action=LockDeviceButton(data=all);\n" /* invalid field */
+        "    };\n"
+        "    interpret 0x10002 {\n"
+        "      action=DeviceValuator(data=all);\n" /* invalid field */
+        "    };\n"
+        "    interpret 0x10003 {\n"
+        "      action=ActionMessage(data=all);\n" /* invalid field */
         "    };\n"
         "  };\n"
         "  xkb_symbols {\n"
         "   key <1> { [ISOLock(affect=all)] };\n"
-        "   key <2> { [RedirectKey(data=<1>)] };\n" /* invalid field */
-        "   key <3> { [DeviceButton(data=<1>)] };\n" /* invalid field */
-        "   key <4> { [LockDeviceButton(data=<1>)] };\n" /* invalid field */
-        "   key <5> { [DeviceValuator(data=<1>)] };\n" /* invalid field */
-        "   key <6> { [ActionMessage(data=<1>)] };\n" /* invalid field */
+        "   key <2> { [DeviceButton(data=<1>)] };\n" /* invalid field */
+        "   key <3> { [LockDeviceButton(data=<1>)] };\n" /* invalid field */
+        "   key <4> { [DeviceValuator(data=<1>)] };\n" /* invalid field */
+        "   key <5> { [ActionMessage(data=<1>)] };\n" /* invalid field */
         "  };\n"
         "};";
     assert(test_compile_output(ctx, XKB_KEYMAP_FORMAT_TEXT_V1,
@@ -2737,6 +2853,7 @@ main(int argc, char *argv[])
     test_no_action_void_action(ctx, update_output_files);
     test_prebuilt_keymap_roundtrip(ctx, update_output_files);
     test_keymap_from_rules(ctx);
+    test_redirect_key(ctx, update_output_files);
     test_unsupported_legacy_x11_actions(ctx, update_output_files);
     test_extended_layout_indices(ctx, update_output_files);
 

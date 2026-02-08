@@ -58,6 +58,10 @@ typedef struct {
     xkb_atom_t type;
 } GroupInfo;
 
+enum {
+    XKB_RANGE_EXCEED_TYPE_WIDTH = sizeof(enum xkb_range_exceed_type) * CHAR_BIT
+};
+
 typedef struct {
     enum key_field defined;
     enum merge_mode merge;
@@ -70,7 +74,9 @@ typedef struct {
     xkb_mod_mask_t vmodmap;
     xkb_atom_t default_type;
 
-    enum xkb_range_exceed_type out_of_range_group_action;
+    enum xkb_range_exceed_type
+        out_of_range_group_action:(XKB_RANGE_EXCEED_TYPE_WIDTH - 1);
+    bool out_of_range_pending_group:1;
     xkb_layout_index_t out_of_range_group_number;
 } KeyInfo;
 
@@ -179,20 +185,20 @@ typedef struct {
 
     xkb_layout_index_t max_groups;
     struct xkb_context *ctx;
-    /* Needed for AddKeySymbols. */
-    const struct xkb_keymap *keymap;
+    /* Needed for AddKeySymbols and parsing actions */
+    const struct xkb_keymap_info *keymap_info;
 } SymbolsInfo;
 
 static void
-InitSymbolsInfo(SymbolsInfo *info, const struct xkb_keymap *keymap,
+InitSymbolsInfo(SymbolsInfo *info, const struct xkb_keymap_info *keymap_info,
                 unsigned int include_depth, const struct xkb_mod_set *mods)
 {
     memset(info, 0, sizeof(*info));
-    info->ctx = keymap->ctx;
+    info->ctx = keymap_info->keymap.ctx;
     info->include_depth = include_depth;
-    info->keymap = keymap;
-    info->max_groups = format_max_groups(keymap->format);
-    InitKeyInfo(keymap->ctx, &info->default_key);
+    info->keymap_info = keymap_info;
+    info->max_groups = keymap_info->features.max_groups;
+    InitKeyInfo(keymap_info->keymap.ctx, &info->default_key);
     InitActionsInfo(&info->default_actions);
     InitVMods(&info->mods, mods, include_depth > 0);
     info->explicit_group = XKB_LAYOUT_INVALID;
@@ -506,6 +512,7 @@ MergeKeys(SymbolsInfo *info, KeyInfo *into, KeyInfo *from, bool same_file)
     }
     if (UseNewKeyField(KEY_FIELD_GROUPINFO, into->defined, from->defined,
                        clobber, report, &collide)) {
+        into->out_of_range_pending_group = from->out_of_range_pending_group;
         into->out_of_range_group_action = from->out_of_range_group_action;
         into->out_of_range_group_number = from->out_of_range_group_number;
         into->defined |= KEY_FIELD_GROUPINFO;
@@ -522,25 +529,6 @@ MergeKeys(SymbolsInfo *info, KeyInfo *into, KeyInfo *from, bool same_file)
     ClearKeyInfo(from);
     InitKeyInfo(info->ctx, from);
     return true;
-}
-
-static struct xkb_key *
-XkbKeyByName(struct xkb_keymap *keymap, xkb_atom_t name, bool use_aliases)
-{
-    if (name < keymap->num_key_names) {
-        const KeycodeMatch match = keymap->key_names[name];
-        if (match.found) {
-            if (!match.is_alias) {
-                assert(name == keymap->keys[match.key.index].name);
-                return &keymap->keys[match.key.index];
-            } else if (use_aliases) {
-                assert(match.alias.real ==
-                       keymap->keys[keymap->key_names[match.alias.real].key.index].name);
-                return &keymap->keys[keymap->key_names[match.alias.real].key.index];
-            }
-        }
-    }
-    return NULL;
 }
 
 static xkb_atom_t
@@ -565,7 +553,7 @@ AddKeySymbols(SymbolsInfo *info, KeyInfo *keyi, bool same_file)
      * following loop) is enough, and we won't get multiple KeyInfo's
      * for the same key because of aliases.
      */
-    keyi->name = XkbResolveKeyAlias(info->keymap, keyi->name);
+    keyi->name = XkbResolveKeyAlias(&info->keymap_info->keymap, keyi->name);
 
     KeyInfo *iter;
     darray_foreach(iter, info->keys)
@@ -695,7 +683,7 @@ HandleIncludeSymbols(SymbolsInfo *info, IncludeStmt *include)
         return false;
     }
 
-    InitSymbolsInfo(&included, info->keymap, info->include_depth + 1,
+    InitSymbolsInfo(&included, info->keymap_info, info->include_depth + 1,
                     &info->mods);
     included.name = steal(&include->stmt);
 
@@ -712,7 +700,7 @@ HandleIncludeSymbols(SymbolsInfo *info, IncludeStmt *include)
             return false;
         }
 
-        InitSymbolsInfo(&next_incl, info->keymap, info->include_depth + 1,
+        InitSymbolsInfo(&next_incl, info->keymap_info, info->include_depth + 1,
                         &included.mods);
         if (stmt->modifier) {
             next_incl.explicit_group = atoi(stmt->modifier) - 1;
@@ -724,12 +712,19 @@ HandleIncludeSymbols(SymbolsInfo *info, IncludeStmt *include)
                 next_incl.explicit_group = info->explicit_group;
             }
         }
-        else if (info->keymap->num_groups != 0 && next_incl.include_depth == 1) {
-            /* If keymap is the result of RMLVO resolution and we are at the
+        else if (info->keymap_info->keymap.num_groups != 0 &&
+                 next_incl.include_depth == 1) {
+            /*
+             * If keymap is the result of RMLVO resolution and we are at the
              * first include depth, transform e.g. `pc` into `pc:1` in order to
              * force only one group per key using the explicit group.
              *
-             * NOTE: X11’s xkbcomp does not apply this rule. */
+             * NOTE: X11’s xkbcomp does not apply this rule.
+             *
+             * WARNING: If this feature is removed, then the entries `Last` in
+             * the `groupIndexNames` and `groupMaskNames` LUT should initially
+             * be inactive.
+             */
             next_incl.explicit_group = 0;
         }
         else {
@@ -783,7 +778,7 @@ GetGroupIndex(SymbolsInfo *info, KeyInfo *keyi, ExprDef *arrayNdx,
         return true;
     }
 
-    if (!ExprResolveGroup(info->ctx, info->max_groups, arrayNdx, ndx_rtrn)) {
+    if (!ExprResolveGroup(info->keymap_info, arrayNdx, ndx_rtrn, NULL)) {
         log_err(info->ctx, XKB_ERROR_UNSUPPORTED_GROUP_INDEX,
                 "Illegal group index for %s of key %s\n"
                 "Definition with non-integer array index ignored\n",
@@ -958,9 +953,8 @@ AddActionsToKey(SymbolsInfo *info, KeyInfo *keyi, ExprDef *arrayNdx,
         for (ExprDef *act = actionList->actions;
              act; act = (ExprDef *) act->common.next) {
             union xkb_action toAct = { 0 };
-            if (!HandleActionDef(info->ctx, info->keymap->format,
-                                 &info->default_actions, &info->mods,
-                                 act, &toAct)) {
+            if (!HandleActionDef(info->keymap_info, &info->default_actions,
+                                 &info->mods, act, &toAct)) {
                 log_err(info->ctx, XKB_ERROR_INVALID_VALUE,
                         "Illegal action definition for %s; "
                         "Action for group %"PRIu32"/level %"PRIu32" ignored\n",
@@ -1033,8 +1027,9 @@ static const LookupEntry repeatEntries[] = {
 
 static bool
 SetSymbolsField(SymbolsInfo *info, KeyInfo *keyi, const char *field,
-                ExprDef *arrayNdx, ExprDef *value)
+                ExprDef *arrayNdx, ExprDef **value_ptr)
 {
+    ExprDef * restrict const value = *value_ptr;
     if (istreq(field, "type")) {
         xkb_layout_index_t ndx = 0;
         xkb_atom_t val = XKB_ATOM_NONE;
@@ -1050,7 +1045,7 @@ SetSymbolsField(SymbolsInfo *info, KeyInfo *keyi, const char *field,
             keyi->default_type = val;
             keyi->defined |= KEY_FIELD_DEFAULT_TYPE;
         }
-        else if (!ExprResolveGroup(info->ctx, info->max_groups, arrayNdx, &ndx)) {
+        else if (!ExprResolveGroup(info->keymap_info, arrayNdx, &ndx, NULL)) {
             log_err(info->ctx, XKB_ERROR_UNSUPPORTED_GROUP_INDEX,
                     "Illegal group index for type of key %s; "
                     "Definition with non-integer array index ignored\n",
@@ -1167,8 +1162,10 @@ SetSymbolsField(SymbolsInfo *info, KeyInfo *keyi, const char *field,
     else if (istreq(field, "groupsredirect") ||
              istreq(field, "redirectgroups")) {
         xkb_layout_index_t grp = 0;
+        bool pending = false;
 
-        if (!ExprResolveGroup(info->ctx, info->max_groups, value, &grp)) {
+        if (!ExprResolveGroup(info->keymap_info, value, &grp, &pending) &&
+            !pending) {
             log_err(info->ctx, XKB_ERROR_UNSUPPORTED_GROUP_INDEX,
                     "Illegal group index for redirect of key %s; "
                     "Definition with non-integer group ignored\n",
@@ -1176,8 +1173,29 @@ SetSymbolsField(SymbolsInfo *info, KeyInfo *keyi, const char *field,
             return false;
         }
 
+        if (pending) {
+            keyi->out_of_range_pending_group = true;
+            const darray_size_t pending_index =
+                darray_size(*info->keymap_info->pending_computations);
+            darray_append(
+                *info->keymap_info->pending_computations,
+                (struct pending_computation) {
+                    .expr = *value_ptr,
+                    .computed = false,
+                    .value = 0,
+                }
+            );
+            *value_ptr = NULL;
+            static_assert(sizeof(keyi->out_of_range_group_number) ==
+                          sizeof(pending_index),
+                        "Cannot save pending computation");
+            keyi->out_of_range_group_number = pending_index;
+        } else {
+            keyi->out_of_range_pending_group = false;
+            keyi->out_of_range_group_number = grp - 1;
+        }
+
         keyi->out_of_range_group_action = RANGE_REDIRECT;
-        keyi->out_of_range_group_number = grp - 1;
         keyi->defined |= KEY_FIELD_GROUPINFO;
     }
     else {
@@ -1204,7 +1222,7 @@ SetGroupName(SymbolsInfo *info, ExprDef *arrayNdx, ExprDef *value,
     }
 
     xkb_layout_index_t group = 0;
-    if (!ExprResolveGroup(info->ctx, info->max_groups, arrayNdx, &group)) {
+    if (!ExprResolveGroup(info->keymap_info, arrayNdx, &group, NULL)) {
         log_err(info->ctx, XKB_ERROR_UNSUPPORTED_GROUP_INDEX,
                 "Illegal index in group name definition; "
                 "Definition with non-integer array index ignored\n");
@@ -1277,7 +1295,7 @@ HandleGlobalVar(SymbolsInfo *info, VarDef *stmt)
         temp.merge = (temp.merge == MERGE_REPLACE)
             ? MERGE_OVERRIDE
             : stmt->merge;
-        ret = SetSymbolsField(info, &temp, field, arrayNdx, stmt->value);
+        ret = SetSymbolsField(info, &temp, field, arrayNdx, &stmt->value);
         MergeKeys(info, &info->default_key, &temp, true);
     }
     else if (!elem && (istreq(field, "name") ||
@@ -1309,10 +1327,9 @@ HandleGlobalVar(SymbolsInfo *info, VarDef *stmt)
         ret = true;
     }
     else if (elem) {
-        ret = SetDefaultActionField(info->ctx, info->keymap->format,
-                                    &info->default_actions,
+        ret = SetDefaultActionField(info->keymap_info, &info->default_actions,
                                     &info->mods, elem, field, arrayNdx,
-                                    stmt->value, stmt->merge);
+                                    &stmt->value, stmt->merge);
     } else {
         log_err(info->ctx, XKB_ERROR_UNKNOWN_DEFAULT_FIELD,
                 "Default defined for unknown field \"%s\"; Ignored\n", field);
@@ -1363,7 +1380,7 @@ HandleSymbolsBody(SymbolsInfo *info, VarDef *def, KeyInfo *keyi)
             ok = false;
         }
 
-        if (!ok || !SetSymbolsField(info, keyi, field, arrayNdx, def->value))
+        if (!ok || !SetSymbolsField(info, keyi, field, arrayNdx, &def->value))
             all_valid_entries = false;
     }
 
@@ -1845,6 +1862,7 @@ CopySymbolsDefToKeymap(struct xkb_keymap *keymap, SymbolsInfo *info,
             key->explicit |= EXPLICIT_TYPES;
     }
 
+    key->out_of_range_pending_group = keyi->out_of_range_pending_group;
     key->out_of_range_group_number = keyi->out_of_range_group_number;
     key->out_of_range_group_action = keyi->out_of_range_group_action;
 
@@ -1943,11 +1961,11 @@ CopySymbolsToKeymap(struct xkb_keymap *keymap, SymbolsInfo *info)
 }
 
 bool
-CompileSymbols(XkbFile *file, struct xkb_keymap *keymap)
+CompileSymbols(XkbFile *file, struct xkb_keymap_info *keymap_info)
 {
     SymbolsInfo info;
 
-    InitSymbolsInfo(&info, keymap, 0, &keymap->mods);
+    InitSymbolsInfo(&info, keymap_info, 0, &keymap_info->keymap.mods);
 
     if (file !=NULL)
         HandleSymbolsFile(&info, file);
@@ -1955,7 +1973,7 @@ CompileSymbols(XkbFile *file, struct xkb_keymap *keymap)
     if (info.errorCount != 0)
         goto err_info;
 
-    if (!CopySymbolsToKeymap(keymap, &info))
+    if (!CopySymbolsToKeymap(&keymap_info->keymap, &info))
         goto err_info;
 
     ClearSymbolsInfo(&info);

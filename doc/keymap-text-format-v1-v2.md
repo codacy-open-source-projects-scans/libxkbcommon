@@ -2027,6 +2027,29 @@ up.
 
     groups = All - group1;
 
+This is a *mask* of group indices.
+
+The following special values can be used in the expression:
+
+<dl>
+<dt>`GroupN`</dt>
+<dd>
+Denotes the N-th group, e.g. `Group3` is `0x4` = `1 << (3 - 1)`.
+<dt>`First`</dt>
+<dd>
+Denotes the *first* group and always equals to `0x1`.
+
+@since 1.14
+</dd>
+<dt>`Last`</dt>
+<dd>
+Denotes the *last* group and depends on the keymap setup: e.g. with 3 layouts
+it is to `0x4 = 1 << (3 - 1)`.
+
+@since 1.14
+</dd>
+</dl>
+
 If the given groups are in the required state (see below), the LED is
 lit.
 
@@ -2121,6 +2144,9 @@ A key description consists of:
 
         - @ref key-virtual-modifiers "Virtual modifiers"
         - @ref key-repeat "Repeat"
+        - group wrap control
+          @todo `groupsWrap`, `groupsClamp`, `groupsRedirect`
+          <!-- TODO: doc about special values First/Last -->
     </dd>
 </dl>
 
@@ -3127,6 +3153,7 @@ The following table provide an overview of the available actions:
 | ^        | [`LockGroup`][LockGroup] |             | Modifies the _locked_ group        |
 | [Keyboard controls action] | [`SetControls`][SetControls] |         | Set the standard XKB controls      |
 | ^        | [`LockControls`][LockControls] |       | Lock the standard XKB controls     |
+| [Keyboard emulation action] | [`RedirectKey`][redirectkey] | `Redirect` | Emulate pressing a key with a different key code |
 | [Legacy action] | `MovePointer`| `MovePtr`        | Move the mouse pointer             |
 | ^        | `PointerButton`     | `PtrBtn`         | Simulate a mouse button press      |
 | ^        | `LockPointerButton` | `LockPtrBtn`     | Simulate a mouse button press, locked until the action’s key is pressed again. |
@@ -3134,8 +3161,7 @@ The following table provide an overview of the available actions:
 | ^        | [`TerminateServer`][TerminateServer] | `Terminate` | Shut down the X server |
 | ^        | `SwitchScreen`      |                  | Switch virtual X screen            |
 | ^        | [`Private`][Private]|                  | Raw encoding of an action          |
-| [Unsupported legacy action]| [`RedirectKey`][redirectkey] | `Redirect` | Emulate pressing a key with a different key code |
-| ^        | `ISOLock`           |                  | Convert ordinary modifier key actions into lock actions while this action is active |
+| [Unsupported legacy action] | `ISOLock`           |                  | Convert ordinary modifier key actions into lock actions while this action is active |
 | ^        | `DeviceButton`      | `DevBtn`         | Emulate an event from an arbitrary input device such as a joystick |
 | ^        | `LockDeviceButton`  | `LockDevBtn`     | Emulate an event from an arbitrary input device such as a joystick |
 | ^        | `DeviceValuator`    | `DevVal`         | <span class="todo">TODO</span> |
@@ -3473,6 +3499,26 @@ Modifies the *base* group.
 <td>
 Group index:
 - 1-based numbering
+- Named constants:
+
+  <dl>
+  <dt>`GroupN`</dt>
+  <dd>
+  Denotes the N-th group, e.g. `Group2` is the second group.
+  <dt>`First`</dt>
+  <dd>
+  Denotes the *first* group and always equals to `1`.
+
+  @since 1.14
+  </dd>
+  <dt>`Last`</dt>
+  <dd>
+  Denotes the *last* group and depends on the keymap setup: e.g. with 3 layouts
+  it equals to 3.
+
+  @since 1.14
+  </dd>
+  </dl>
 - either absolute (no sign) or relative (`+`/`-` sign)
 </td>
 <td>0</td>
@@ -3795,6 +3841,80 @@ press.
 </tbody>
 </table>
 
+### Keyboard emulation actions {#kbd-emulation-actions}
+
+#### RedirectKey {#redirect-key-action}
+
+[Keyboard emulation action]: @ref kbd-emulation-actions
+[redirectkey]: @ref redirect-key-action
+
+`RedirectKey` emulates pressing a key with a different key code.
+
+`RedirectKey` normally redirects to another key on the *same device* as the key
+or button which caused the event, else on the *core* keyboard device.
+
+<table>
+<caption>Parameters</caption>
+<thead>
+<tr>
+<th>Name</th>
+<th>Aliases</th>
+<th>Data type</th>
+<th>Default value</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>`key`</th>
+<td>`keycode`, `kc`</td>
+<td>keycode</td>
+<td>0</td>
+<td>Target keycode to emulate</td>
+<tr>
+<th>`clearmodifiers`</th>
+<td>`clearmods`</td>
+<td>modifier mask</td>
+<td>`none` (0)</td>
+<td>Modifiers to clear</td>
+</tr>
+<tr>
+<th>`modifiers`</th>
+<td>`mods`</td>
+<td>modifier mask</td>
+<td>`none` (0)</td>
+<td>Modifiers to add</td>
+</tr>
+</tbody>
+</table>
+
+<table>
+<caption>Effects</caption>
+<thead>
+<tr>
+<th>On key *press*</th>
+<th>On key *release*</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+
+Key press causes a key press event for the key specified by the `key` parameter
+instead of for the actual key. The state reported in this event reports of the
+current *effective* modifiers changed as follow:
+- Modifiers in the `clearmodifiers` parameter are cleared.
+- Modifiers in the `modifiers` parameter are set.
+</td>
+<td>
+
+Key release causes a key release event for the key specified by the `key`
+parameter; the state field for this event consists of the *effective*
+modifiers at the time of the release, changed as described on the key press.
+</td>
+</tbody>
+</table>
+
 
 ### Legacy X11 actions {#legacy-x11-actions}
 
@@ -3920,77 +4040,6 @@ Examples:
 
 @attention The following legacy actions are **unsupported**: they are parsed
 and but *not validated* and are then completely *ignored*.
-
-#### Redirect key {#redirect-key-action}
-
-[redirectkey]: @ref redirect-key-action
-
-`RedirectKey` emulates pressing a key with a different key code.
-
-`RedirectKey` normally redirects to another key on the *same device* as the key
-or button which caused the event, else on the *core* keyboard device.
-
-<table>
-<caption>Parameters</caption>
-<thead>
-<tr>
-<th>Name</th>
-<th>Aliases</th>
-<th>Data type</th>
-<th>Default value</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<th>`key`</th>
-<td>`keycode`, `kc`</td>
-<td>keycode</td>
-<td>0</td>
-<td>Target keycode to emulate</td>
-<tr>
-<th>`clearmodifiers`</th>
-<td>`clearmods`</td>
-<td>modifier mask</td>
-<td>`none` (0)</td>
-<td>Modifiers to clear</td>
-</tr>
-<tr>
-<th>`modifiers`</th>
-<td>`mods`</td>
-<td>modifier mask</td>
-<td>`none` (0)</td>
-<td>Modifiers to add</td>
-</tr>
-</tbody>
-</table>
-
-<table>
-<caption>Effects</caption>
-<thead>
-<tr>
-<th>On key *press*</th>
-<th>On key *release*</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>
-
-Key press causes a key press event for the key specified by the `key` parameter
-instead of for the actual key. The state reported in this event reports of the
-current *effective* modifiers changed as follow:
-- Modifiers in the `clearmodifiers` parameter are cleared.
-- Modifiers in the `modifiers` parameter are set.
-</td>
-<td>
-
-Key release causes a key release event for the key specified by the `key`
-parameter; the state field for this event consists of the *effective*
-modifiers at the time of the release, changed as described on the key press.
-</td>
-</tbody>
-</table>
 
 #### ISO lock
 
