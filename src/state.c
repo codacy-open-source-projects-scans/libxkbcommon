@@ -24,6 +24,7 @@
 
 #include <assert.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "xkbcommon/xkbcommon.h"
@@ -34,10 +35,12 @@
 #include "state-priv.h"
 #include "utf8.h"
 #include "utils.h"
+#include "utils-numbers.h"
 
 struct xkb_event_iterator {
-    darray(struct xkb_event) queue;
+    enum xkb_event_iterator_flags flags;
     darray_size_t next;
+    darray(struct xkb_event) queue;
     struct xkb_context *ctx;
 };
 
@@ -926,14 +929,30 @@ append_redirect_key_events(struct xkb_state *state,
 {
     enum xkb_state_component changed = 0;
     const xkb_mod_mask_t mask = redirect->affect;
+
+    /*
+     * Reference state: find the last state update in the queue, otherwise
+     * use the current state.
+     */
+    struct xkb_event *event;
+    const struct state_components *last_components = &state->components;
+    darray_foreach_reverse(event, events->queue) {
+        if (event->type == XKB_EVENT_TYPE_COMPONENTS_CHANGE) {
+            last_components = &event->components.components;
+            break;
+        }
+    }
+    /* Ensure that only tweaks could have affected the queue */
+    assert((last_components != &state->components) ^ darray_empty(events->queue));
+
     if (mask) {
-        struct state_components new = state->components;
+        struct state_components new = *last_components;
         new.base_mods = (new.base_mods & ~mask) | redirect->mods;
         new.latched_mods = (new.latched_mods & ~mask) | redirect->mods;
         new.locked_mods = (new.locked_mods & ~mask) | redirect->mods;
         new.mods = (new.mods & ~mask) | redirect->mods;
 
-        changed = get_state_component_changes(&state->components, &new);
+        changed = get_state_component_changes(last_components, &new);
         if (changed) {
             darray_append(events->queue, (struct xkb_event) {
                 .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
@@ -957,7 +976,7 @@ append_redirect_key_events(struct xkb_state *state,
         darray_append(events->queue, (struct xkb_event) {
             .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
             .components = {
-                .components = state->components,
+                .components = *last_components,
                 .changed = changed
             }
         });
@@ -2359,26 +2378,38 @@ struct xkb_state_machine {
     struct state_machine_data {
         /** Configuration */
         struct state_machine_config {
+            /** Modifiers remapping */
+            struct state_machine_modifiers_config {
+                /** Real modifier mask */
+                xkb_mod_mask_t mask;
+                /** Modifiers re-mappings */
+                struct state_machine_mods_mapping {
+                    xkb_mod_mask_t source;
+                    xkb_mod_mask_t target;
+                } *mappings;
+                darray_size_t mappings_num;
+            } modifiers;
+
             /** Shortcuts tweak */
             struct state_machine_shortcuts_config {
                 /** Real modifier mask to trigger shortcuts tweaks */
                 xkb_mod_mask_t mask;
-                /** Target layouts targets */
+                /** Layouts targets */
                 xkb_layout_index_t *targets;
             } shortcuts;
         } config;
-        /** State */
-        struct {
-            /** The “real” base group, before shortcuts tweak */
-            int32_t base_group;
-        } state;
     } extra;
 };
+
+typedef darray(struct state_machine_mods_mapping) state_machine_mods_mappings;
 
 struct xkb_state_machine_options {
     /** Accessibility flags */
     enum xkb_state_accessibility_flags a11y_affect;
     enum xkb_state_accessibility_flags a11y_flags;
+
+    /** Modifiers re-mapping */
+    state_machine_mods_mappings mods;
 
     /** Shortcuts tweak */
     struct xkb_shortcuts_config_options {
@@ -2425,6 +2456,7 @@ xkb_state_machine_options_destroy(struct xkb_state_machine_options *options)
         return;
 
     darray_free(options->shortcuts.targets);
+    darray_free(options->mods);
     xkb_context_unref(options->ctx);
     free(options);
 }
@@ -2449,6 +2481,54 @@ xkb_state_machine_options_update_a11y_flags(
     options->a11y_affect |= affect;
     options->a11y_flags &= ~affect;
     options->a11y_flags |= (flags & affect);
+
+    return 0;
+}
+
+int
+xkb_state_machine_options_mods_set_mapping(
+    struct xkb_state_machine_options *options,
+    xkb_mod_mask_t source,
+    xkb_mod_mask_t target
+)
+{
+    if (!source) {
+        if (!target) {
+            /* Reset mappings */
+            darray_resize(options->mods, 0);
+            return 0;
+        } else {
+            return -1;
+        }
+    }
+
+    struct state_machine_mods_mapping *mapping = NULL;
+    darray_size_t m = 0;
+    darray_enumerate(m, mapping, options->mods) {
+        if (mapping->source == source) {
+            if (!target) {
+                /* Remove mapping */
+                darray_remove(options->mods, m);
+            } else {
+                /* Update mapping */
+                mapping->target = target;
+            }
+            return 0;
+        }
+    }
+
+    if (target) {
+        /* Append new mapping */
+        darray_append(
+            options->mods,
+            (struct state_machine_mods_mapping) {
+                .source = source,
+                .target = target
+            }
+        );
+    } else {
+        /* Ignore missing mapping */
+    }
 
     return 0;
 }
@@ -2495,10 +2575,92 @@ xkb_state_machine_options_shortcuts_set_mapping(
     return 0;
 }
 
+/** Compare 2 modifiers combinations */
+static int
+cmp_mod_masks(const void *a, const void *b)
+{
+    const xkb_mod_mask_t m1 = *((xkb_mod_mask_t *) a);
+    const xkb_mod_mask_t m2 = *((xkb_mod_mask_t *) b);
+    if (m1 == m2)
+        return 0;
+
+    if (!m1)
+        return +1;
+    if (!m2)
+        return -1;
+
+    const xkb_mod_mask_t overlap = (m1 & m2);
+    if (overlap == m1)
+        return +1; /* m1 is a subset of m2 */
+    if (overlap == m2)
+        return -1; /* m2 is a subset of m1 */
+
+    /* Compare active modifiers numbers */
+    const int count1 = popcount32(m1);
+    const int count2 = popcount32(m2);
+    if (count1 > count2)
+        return -1;
+    if (count1 < count2)
+        return +1;
+
+    /* Give priority to real modifiers */
+    return (m1 < m2) ? -1 : +1;
+}
+
+static bool
+state_machine_set_mods(struct xkb_state_machine *sm,
+                       const state_machine_mods_mappings *raw_mappings)
+{
+    if (!darray_empty(*raw_mappings)) {
+        state_machine_mods_mappings mappings = darray_new();
+        xkb_mod_mask_t mask = 0;
+        const struct state_machine_mods_mapping *mapping;
+        const xkb_mod_mask_t invalid = ~sm->state.keymap->canonical_state_mask;
+        darray_foreach(mapping, *raw_mappings) {
+            if (!mapping->source || !mapping->target ||
+                (mapping->source & invalid) || (mapping->target & invalid))
+                continue;
+            darray_append(mappings, *mapping);
+            mask |= mapping->source;
+        }
+
+        /*
+         * Re-order the mappings, so that combinations have higher priority
+         * if they are superset of other combinations.
+         * For other type of overlaps, see the sorting function.
+         */
+        qsort(darray_items(mappings), darray_size(mappings),
+            sizeof(*darray_items(mappings)), &cmp_mod_masks);
+
+        darray_steal(
+            mappings,
+            &sm->extra.config.modifiers.mappings,
+            &sm->extra.config.modifiers.mappings_num
+        );
+        sm->extra.config.modifiers.mask = mask;
+    } else {
+        sm->extra.config.modifiers = (struct state_machine_modifiers_config) {
+            .mappings = NULL,
+            .mappings_num = 0,
+            .mask = 0
+        };
+    }
+
+    return true;
+}
+
 static bool
 state_machine_set_shortcuts(struct xkb_state_machine *sm,
                             const struct xkb_shortcuts_config_options *options)
 {
+    if (darray_empty(options->targets)) {
+        sm->extra.config.shortcuts = (struct state_machine_shortcuts_config) {
+            .mask = 0,
+            .targets = NULL
+        };
+        return true;
+    }
+
     struct xkb_keymap * const restrict keymap = sm->state.keymap;
 
     /* Consider only defined layouts */
@@ -2544,8 +2706,10 @@ state_machine_set_shortcuts(struct xkb_state_machine *sm,
         targets[l] = XKB_LAYOUT_INVALID;
     }
 
-    sm->extra.config.shortcuts.mask = mask;
-    sm->extra.config.shortcuts.targets = targets;
+    sm->extra.config.shortcuts = (struct state_machine_shortcuts_config) {
+        .mask = mask,
+        .targets = targets
+    };
     return true;
 }
 
@@ -2562,13 +2726,10 @@ xkb_state_machine_new(struct xkb_keymap *keymap,
 
     xkb_state_init(&sm->state, keymap,
                    options->a11y_affect, options->a11y_flags);
-    sm->extra.state.base_group = (int32_t) XKB_LAYOUT_INVALID;
 
-    /* Shortcuts */
-    if (!darray_empty(options->shortcuts.targets)) {
-        if (!state_machine_set_shortcuts(sm, &options->shortcuts))
-            goto error;
-    }
+    if (!state_machine_set_mods(sm, &options->mods) ||
+        !state_machine_set_shortcuts(sm, &options->shortcuts))
+        goto error;
 
     return sm;
 
@@ -2594,6 +2755,7 @@ xkb_state_machine_unref(struct xkb_state_machine *sm)
 
     xkb_state_destroy(&sm->state);
     free(sm->extra.config.shortcuts.targets);
+    free(sm->extra.config.modifiers.mappings);
     free(sm);
 }
 
@@ -2611,67 +2773,6 @@ xkb_state_machine_get_state(struct xkb_state_machine *sm)
     return &sm->state;
 }
 
-/**
- * Activate an alternative layout if some modifiers are active, typically
- * `Control`, `Alt` or `Super`.
- *
- * The tweak consists of computing a *base* layout such that the *effective*
- * layout is the corresponding target layout.
- *
- * The tweak *must* de disabled before updating the core state components of a
- * state machine by other means, so that a state update workflow looks like:
- *
- *   1. undo_shortcuts_tweak(): deactivate the tweak and use the real core state
- *      components
- *   2. update the state, e.g. update_key()
- *   3. update the derived components state, so that the effective group is
- *      updated.
- *   4. do_shortcuts_tweak(): activate the tweak if relevant
- *   5. compute the state changes
- */
-static bool
-do_shortcuts_tweak(struct xkb_state_machine *sm)
-{
-    struct xkb_state * restrict const state = &sm->state;
-    struct state_machine_data * restrict const extra = &sm->extra;
-
-    if (extra->config.shortcuts.targets &&
-        (state->components.mods & extra->config.shortcuts.mask) &&
-        (extra->config.shortcuts.targets[state->components.group] !=
-         XKB_LAYOUT_INVALID)) {
-        /*
-         * Activate shortcuts tweak:
-         * 1. Save the real base group, to be restored by undo_shortcuts_tweak().
-         * 2. Compute the new base group so that the resulting effective group
-         *    is the target.
-         * 3. Recompute derived state components.
-         */
-        extra->state.base_group = state->components.base_group;
-        state->components.base_group
-            = (int32_t) extra->config.shortcuts.targets[state->components.group]
-            - state->components.latched_group
-            - state->components.locked_group;
-        xkb_state_update_derived(state);
-        return true;
-    } else {
-        /* Deactivate shortcuts tweak */
-        extra->state.base_group = (int32_t) XKB_LAYOUT_INVALID;
-        return false;
-    }
-}
-
-/** See do_shortcuts_tweak() */
-static inline void
-undo_shortcuts_tweak(struct xkb_state_machine *sm)
-{
-    struct xkb_state * restrict const state = &sm->state;
-    struct state_machine_data * restrict const extra = &sm->extra;
-    if (extra->state.base_group != (int32_t) XKB_LAYOUT_INVALID) {
-        /* Restore the real base group, but not the effective group */
-        state->components.base_group = extra->state.base_group;
-    }
-}
-
 int
 xkb_state_machine_update_controls(struct xkb_state_machine *sm,
                                   struct xkb_event_iterator *events,
@@ -2684,11 +2785,7 @@ xkb_state_machine_update_controls(struct xkb_state_machine *sm,
     struct xkb_state * restrict const state = &sm->state;
     const struct state_components previous_components = state->components;
 
-    undo_shortcuts_tweak(sm);
-
     state_update_controls(state, events, affect, controls);
-
-    do_shortcuts_tweak(sm);
 
     const enum xkb_state_component changed =
         get_state_component_changes(&previous_components, &state->components);
@@ -2724,8 +2821,6 @@ xkb_state_machine_update_latched_locked(struct xkb_state_machine *sm,
     struct xkb_state * restrict const state = &sm->state;
     const struct state_components previous_components = state->components;
 
-    undo_shortcuts_tweak(sm);
-
     state_update_latched_locked(
         state,
         events,
@@ -2740,8 +2835,6 @@ xkb_state_machine_update_latched_locked(struct xkb_state_machine *sm,
     );
 
     xkb_state_update_derived(state);
-
-    do_shortcuts_tweak(sm);
 
     const enum xkb_state_component changed =
         get_state_component_changes(&previous_components, &state->components);
@@ -2759,6 +2852,153 @@ xkb_state_machine_update_latched_locked(struct xkb_state_machine *sm,
     return 0;
 }
 
+static ssize_t
+do_remap_modifiers(const struct state_machine_modifiers_config *mappings,
+                   struct xkb_state *state,
+                   struct xkb_event_iterator *events,
+                   const struct xkb_key *key)
+{
+    if (!(mappings->mask & state->components.mods))
+        return -1;
+
+    const xkb_layout_index_t layout = state_key_get_layout(state, key);
+    if (layout >= key->num_groups)
+        return -1;
+
+    const struct xkb_key_type * restrict const type =
+        key->groups[layout].type;
+    xkb_mod_mask_t affect = 0;
+    xkb_mod_mask_t mods = 0;
+    for (darray_size_t m = 0; m < mappings->mappings_num; m++) {
+        const struct state_machine_mods_mapping * restrict const mapping =
+            &mappings->mappings[m];
+        if (/* Skip not matching active mods */
+            (mapping->source & state->components.mods) == mapping->source &&
+            /* Skip overlap with previous active mappings */
+            !(mapping->source & affect) &&
+            /* Skip if the key type uses some of the source modifiers */
+            !(mapping->source & type->mods.mask)) {
+            affect |= mappings->mappings[m].source;
+            mods |= mappings->mappings[m].target;
+        }
+    }
+
+    if (!affect)
+        return -1;
+
+    struct xkb_state new = *state;
+    new.components.base_mods = (new.components.base_mods & ~affect) | mods;
+    new.components.latched_mods = (new.components.latched_mods & ~affect);
+    new.components.locked_mods = (new.components.locked_mods & ~affect);
+    xkb_state_update_derived(&new);
+
+    ssize_t event_idx = -1;
+    const enum xkb_state_component changed =
+        get_state_component_changes(&state->components, &new.components);
+    if (changed) {
+        event_idx = (ssize_t) darray_size(events->queue);
+        darray_append(events->queue, (struct xkb_event) {
+            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .components = {
+                .components = new.components,
+                .changed = changed
+            }
+        });
+    }
+
+    state->components.mods = new.components.mods;
+    return event_idx;
+}
+
+/**
+ * Activate an alternative layout if some modifiers are active, typically
+ * `Control`, `Alt` or `Super`.
+ *
+ * The tweak consists of computing a *base* layout such that the *effective*
+ * layout is the corresponding target layout.
+ */
+static ssize_t
+do_shortcuts_tweak(const struct state_machine_shortcuts_config *config,
+                   struct xkb_state *state,
+                   const struct state_components *previous_components,
+                   struct xkb_event_iterator *events, ssize_t remap_event)
+{
+    if (config->targets &&
+        (state->components.mods & config->mask) &&
+        (config->targets[state->components.group] !=
+         XKB_LAYOUT_INVALID)) {
+        /*
+         * Activate shortcuts tweak:
+         * 1. The real base group is saved by the caller, to be restored by
+         *    later by a call to undo_tweaks().
+         * 2. Compute the new base group so that the resulting effective group
+         *    is the target.
+         * 3. Recompute derived state components.
+         */
+        struct xkb_state new = *state;
+        if (remap_event < 0) {
+            /* Create new event */
+            remap_event = (ssize_t) darray_size(events->queue);
+            darray_append(events->queue, (struct xkb_event) {
+                .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+                .components = {
+                    .components = {0},
+                    .changed = 0
+                }
+            });
+        } else {
+            /* Merge with last remap event */
+            new.components =
+                darray_item(events->queue, remap_event).components.components;
+        }
+        new.components.base_group
+            = (int32_t) config->targets[state->components.group]
+            - state->components.latched_group
+            - state->components.locked_group;
+        xkb_state_update_derived(&new);
+
+        const enum xkb_state_component changed =
+            get_state_component_changes(previous_components, &new.components);
+        darray_item(events->queue, remap_event).components.changed = changed;
+        darray_item(events->queue, remap_event).components.components =
+            new.components;
+
+        state->components.group = new.components.group;
+    } else {
+        /* No shortcuts tweak */
+    }
+    return remap_event;
+}
+
+static void
+undo_tweaks(const struct xkb_state *state,
+            const struct state_components *previous_components,
+            struct xkb_event_iterator *events)
+{
+    /* Get last component event */
+    const struct xkb_event *event = NULL;
+    darray_foreach_reverse(event, events->queue) {
+        if (event->type == XKB_EVENT_TYPE_COMPONENTS_CHANGE)
+            break;
+    }
+    if (!event)
+        return;
+
+    /* Restore state */
+    const enum xkb_state_component changed =
+        get_state_component_changes(previous_components,
+                                    &event->components.components);
+    if (changed) {
+        darray_append(events->queue, (struct xkb_event) {
+            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .components = {
+                .components = *previous_components,
+                .changed = changed
+            }
+        });
+    }
+}
+
 int
 xkb_state_machine_update_key(struct xkb_state_machine *sm,
                              struct xkb_event_iterator *events,
@@ -2774,7 +3014,11 @@ xkb_state_machine_update_key(struct xkb_state_machine *sm,
 
     const struct state_components previous_components = state->components;
 
-    undo_shortcuts_tweak(sm);
+    ssize_t remap_event = do_remap_modifiers(&sm->extra.config.modifiers, state,
+                                             events, key);
+
+    remap_event = do_shortcuts_tweak(&sm->extra.config.shortcuts, state,
+                                     &previous_components, events, remap_event);
 
     state->set_mods = 0;
     state->clear_mods = 0;
@@ -2807,10 +3051,20 @@ xkb_state_machine_update_key(struct xkb_state_machine *sm,
 
     xkb_state_update_derived(state);
 
-    do_shortcuts_tweak(sm);
+    bool has_key_event = false;
+    const struct xkb_event *event;
+    darray_foreach(event, events->queue) {
+        switch (event->type) {
+        case XKB_EVENT_TYPE_KEY_DOWN:
+        case XKB_EVENT_TYPE_KEY_UP:
+            has_key_event = true;
+            break;
+        default:
+            continue;
+        }
+    }
 
-    if (darray_empty(events->queue)) {
-        // FIXME: this assumption seems too fragile!
+    if (!has_key_event) {
         /*
          * Append key event only if we did not generate it before with e.g.
          * RedirectKey().
@@ -2821,6 +3075,11 @@ xkb_state_machine_update_key(struct xkb_state_machine *sm,
                 : XKB_EVENT_TYPE_KEY_UP,
             .keycode = kc
         });
+    }
+
+    if (remap_event >= 0) {
+        // FIXME: fragile if last state change does not restore the state to the remap event
+        undo_tweaks(state, &previous_components, events);
     }
 
     const enum xkb_state_component changed =
@@ -2838,17 +3097,29 @@ xkb_state_machine_update_key(struct xkb_state_machine *sm,
 }
 
 struct xkb_event_iterator *
-xkb_event_iterator_new(struct xkb_state_machine *sm)
+xkb_event_iterator_new(struct xkb_context *context,
+                       enum xkb_event_iterator_flags flags)
 {
+    static const enum xkb_event_iterator_flags XKB_EVENT_ITERATOR_FLAGS =
+        XKB_EVENT_ITERATOR_NO_FLAGS;
+
+    if (flags & ~XKB_EVENT_ITERATOR_FLAGS) {
+        log_err_func(context, XKB_LOG_MESSAGE_NO_ID,
+                     "unrecognized event iterator flags: %#x\n",
+                     (flags & ~XKB_EVENT_ITERATOR_FLAGS));
+        return NULL;
+    }
+
     struct xkb_event_iterator *events = calloc(1, sizeof(*events));
     if (events == NULL) {
-        log_err(sm->state.keymap->ctx, XKB_ERROR_ALLOCATION_ERROR,
+        log_err(context, XKB_ERROR_ALLOCATION_ERROR,
                 "%s: cannot allocate state event iterator\n", __func__);
         return events;
     }
     darray_init(events->queue);
+    events->flags = flags;
     events->next = 0;
-    events->ctx = xkb_context_ref(sm->state.keymap->ctx);
+    events->ctx = xkb_context_ref(context);
     return events;
 }
 

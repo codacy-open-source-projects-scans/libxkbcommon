@@ -39,17 +39,62 @@ They are usually located at `/usr/share/xkeyboard-config-2`, or
 @note Do not modify system files! See @ref how-do-i-customize-my-layout "" for
 further instructions.
 
-### Why do my keyboard shortcuts not work properly?
-
-- 🚧 TODO: Setups with multiple layout and/or non-Latin keyboard layouts may have some
-  issues.
-- 🚧 TODO: [#420]
-
-[#420]: https://github.com/xkbcommon/libxkbcommon/issues/420
-
 ### Why does my key combination to switch between layouts not work?
 
-There are currently some issue with modifier-only shortcuts. See [this issue][#420].
+There are some issues with *modifier-only* shortcuts: see [this bug report][#420].
+
+This can be fixed by using the new parameter <code>[lockOnRelease]</code> in
+`LockGroup()`, available since libxkbcommon 1.11. This will be done at some
+point in [xkeyboard-config].
+
+```diff
+ xkb_compatibility {
+     interpret ISO_Next_Group {
+         useModMapMods= level1;
+         virtualModifier= AltGr;
+-        action= LockGroup(group=+1);
++        action= LockGroup(group=+1, lockOnRelease);
+     };
+ };
+```
+
+[lockOnRelease]: @ref lockOnRelease
+
+### Why do my keyboard shortcuts not work properly?
+
+Users have different expectations when it comes to keyboard shortcuts. However,
+the reference use case is usually a single Latin keyboard layout, with fallbacks
+for other configurations. These fallbacks may not match users’ expectations nor
+even be consistent across applications. See @ref the-keyboard-shortcuts-mess ""
+for some examples.
+
+Since version 1.14, libxkbcommon offers a [dedicated API][shortcuts-api]
+for *Wayland* compositors, which enables to customize the layouts to use for
+keyboard shortcuts.
+
+<dl>
+<dt>Issue specific to a *single* application</dt>
+<dd>
+File a bug report to the corresponding project.
+Possible reasons:
+- Shortcuts handled with <em>[keycodes]</em>, not <em>[keysyms]</em>.
+- Shortcuts handled using only the first layout.
+- Shortcuts do not handle non-Latin keyboard layouts.
+</dd>
+<dt>Issue specific to *multiple* applications</dt>
+<dd>
+First, check if your desktop environment enables to customize shortcuts handling
+*globally*, e.g. by selecting specific layouts when some modifiers are active.
+If it does not, consider filing a bug report to your *Wayland* compositor project
+to encourage developers to implement the relevant [API][shortcuts-api].
+</dd>
+</dl>
+
+[shortcuts-api]: @ref xkb_state_machine_options::xkb_state_machine_options_shortcuts_set_mapping
+[keycodes]: @ref keycode-def
+[keysyms]: @ref keysym-def
+
+[#420]: https://github.com/xkbcommon/libxkbcommon/issues/420
 
 ### Why does my keyboard layout not work as expected?
 
@@ -475,7 +520,7 @@ Nevertheless, the following snippet provide a minimal example to achieve it.
 
 @snippet "test/modifiers.c" xkb_keymap_mod_get_codes
 
-#### How to use keyboard shorcuts from a different layout?
+#### How to use keyboard shortcuts from a different layout?
 
 ##### The keyboard shortcuts mess
 
@@ -489,7 +534,7 @@ However there are some edge cases where this does not work:
   depending on the app used.
 - Punctuation is usually not remapped. E.g. the standard Israeli
   layout cannot remap its key `<AD01>` “slash” to the US layout “q”.
-- If one have multiple Latin layouts, shorcuts may be positioned
+- If one have multiple Latin layouts, shortcuts may be positioned
   differently. E.g. US Qwerty and French Azerty have different
   positions for Ctrl+Q, while the user might want all shortcuts to
   be positioned independently of the layout.
@@ -497,7 +542,7 @@ However there are some edge cases where this does not work:
 ##### XKB limitations
 
 Some users want explicitly to use keyboard shortcuts as if they were typing on
-another keyboard layout, e.g. using Qwerty shorcuts with a Dvorak layout. While
+another keyboard layout, e.g. using Qwerty shortcuts with a Dvorak layout. While
 achievable with modern XKB features (e.g. multiple actions per level), this is
 non-trivial and it does not scale well, thus preventing support in the standard
 keyboard database, [xkeyboard-config].
@@ -530,13 +575,13 @@ if (xkb_state_machine_options_shortcuts_update_mods(options, shortcuts_mask, sho
 `xkb_state_machine_options::xkb_state_machine_options_shortcuts_set_mapping()`
 </dt>
 <dd>
-Set the layout to use for shorcuts for each relevant layout. There are 2 typical
+Set the layout to use for shortcuts for each relevant layout. There are 2 typical
 use cases:
 
 <dl>
 <dt>*Single* layout</dt>
 <dd>
-The user types with a single layout, but want the shorcuts to act as if using
+The user types with a single layout, but want the shortcuts to act as if using
 another layout: e.g. Qwerty shortcuts for the Arabic layout. The keymap would
 be configured with *2* layouts: the user layout then the shortcut layout (e.g.
 `ara,us`).

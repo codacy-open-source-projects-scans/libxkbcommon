@@ -2137,6 +2137,52 @@ xkb_state_machine_options_update_a11y_flags(
 );
 
 /**
+ * Remap a modifier combination, e.g. to make `Control+Alt` act as
+ * `LevelThree` (`AltGr`). This help improving *compatibility* across platforms.
+ *
+ * The remapping takes effect only using
+ * `xkb_state_machine::xkb_state_machine_update_key()` and under certain
+ * conditions:
+ *
+ * - The corresponding *effective* modifiers are active.
+ * - The key being processed has a type that does *not* use any of the *source*
+ *   modifiers.
+ * - There is no other remapping entry with the source modifiers being a
+ *   superset of this entry. E.g. `Control+Alt` has priority over `Control`.
+ *
+ * @param options The state options object to modify.
+ * @param source  Modifiers combination to remap, using its [encoding].
+ * @param target  Modifiers combination target, using their [encoding].
+ * Use 0 to remove a previous entry of @p source.
+ *
+ * Example:
+ *
+ * ```c
+ * // Remap Control+Alt to LevelThree (AltGr)
+ * const xkb_mod_mask_t ctrl = xkb_keymap_mod_get_mask(keymap, XKB_MOD_NAME_CTRL);
+ * const xkb_mod_mask_t alt = xkb_keymap_mod_get_mask(keymap, XKB_VMOD_NAME_ALT);
+ * const xkb_mod_mask_t level3 = xkb_keymap_mod_get_mask(keymap, XKB_VMOD_NAME_LEVEL3);
+ * if (xkb_state_machine_options_mods_set_mapping(options, ctrl | alt, level3)) {
+ *     // handle error
+ *     …
+ * ```
+ *
+ * Using 0 for both @p source and @p target removes all the entries.
+ *
+ * @since 1.14.0
+ *
+ * @memberof xkb_state_machine_options
+ *
+ * [encoding]: @ref modifiers-encoding
+ */
+XKB_EXPORT int
+xkb_state_machine_options_mods_set_mapping(
+    struct xkb_state_machine_options *options,
+    xkb_mod_mask_t source,
+    xkb_mod_mask_t target
+);
+
+/**
  * Set the modifiers that trigger keyboard shortcuts tweak.
  *
  * @param options The state options object to modify.
@@ -2479,9 +2525,20 @@ xkb_event_serialize_layout(const struct xkb_event *event,
 struct xkb_event_iterator;
 
 /**
+ * @enum xkb_event_iterator_flags
+ * Flags for `xkb_event_iterator::xkb_event_iterator_new()`.
+ *
+ * @since 1.14.0
+ */
+enum xkb_event_iterator_flags {
+    XKB_EVENT_ITERATOR_NO_FLAGS = 0
+};
+
+/**
  * Create an event iterator object.
  *
- * @param sm The state machine that produces the event of the iterator.
+ * @param context The context in which to create the iterator.
+ * @param flags   Optional flags for the iterator, or 0.
  *
  * @returns A new event iterator object, or `NULL` on failure.
  *
@@ -2492,7 +2549,8 @@ struct xkb_event_iterator;
  * @memberof xkb_event_iterator
  */
 XKB_EXPORT struct xkb_event_iterator *
-xkb_event_iterator_new(struct xkb_state_machine *sm);
+xkb_event_iterator_new(struct xkb_context *context,
+                       enum xkb_event_iterator_flags flags);
 
 /**
  * Free an event iterator object.
