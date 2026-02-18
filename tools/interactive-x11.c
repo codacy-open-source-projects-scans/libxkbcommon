@@ -56,11 +56,14 @@ struct keyboard {
 
 static bool terminate;
 #ifdef KEYMAP_DUMP
+static_assert(DEFAULT_OUTPUT_KEYMAP_FORMAT == XKB_KEYMAP_USE_ORIGINAL_FORMAT,
+              "Out of sync usage()");
 static enum xkb_keymap_format keymap_format = DEFAULT_OUTPUT_KEYMAP_FORMAT;
 static enum xkb_keymap_serialize_flags serialize_flags =
     (enum xkb_keymap_serialize_flags) DEFAULT_KEYMAP_SERIALIZE_FLAGS;
 #else
 static bool use_events_api = true;
+static enum xkb_consumed_mode consumed_mode = XKB_CONSUMED_MODE_XKB;
 static enum print_state_options print_options = DEFAULT_PRINT_OPTIONS;
 static bool report_state_changes = true;
 static bool use_local_state = false;
@@ -362,8 +365,8 @@ process_event(xcb_generic_event_t *gevent, struct keyboard *kbd)
                 // TODO: better error handling
             } else {
                 tools_print_events(NULL, kbd->state, kbd->state_events,
-                                   kbd->compose_state, print_options,
-                                   report_state_changes);
+                                   kbd->compose_state, consumed_mode,
+                                   print_options, report_state_changes);
             }
         } else {
             if (kbd->compose_state) {
@@ -373,8 +376,8 @@ process_event(xcb_generic_event_t *gevent, struct keyboard *kbd)
             }
 
             tools_print_keycode_state(NULL, kbd->state, kbd->compose_state,
-                                      keycode, XKB_KEY_DOWN,
-                                      XKB_CONSUMED_MODE_XKB, print_options);
+                                      keycode, XKB_KEY_DOWN, consumed_mode,
+                                      print_options);
 
             if (kbd->compose_state) {
                 enum xkb_compose_status status =
@@ -411,13 +414,13 @@ process_event(xcb_generic_event_t *gevent, struct keyboard *kbd)
                 // TODO: better error handling
             } else {
                 tools_print_events(NULL, kbd->state, kbd->state_events,
-                                   kbd->compose_state, print_options,
-                                   report_state_changes);
+                                   kbd->compose_state, consumed_mode,
+                                   print_options, report_state_changes);
             }
         } else {
             tools_print_keycode_state(NULL, kbd->state, kbd->compose_state,
-                                      keycode, XKB_KEY_UP,
-                                      XKB_CONSUMED_MODE_XKB, print_options);
+                                      keycode, XKB_KEY_UP, consumed_mode,
+                                      print_options);
             if (use_local_state) {
                 /* Run our local state machine with the legacy API */
                 const enum xkb_state_component changed =
@@ -513,11 +516,17 @@ usage(FILE *fp, char *progname)
         fprintf(fp,
                 "Usage: %s [--help] [--verbose]"
 #ifndef KEYMAP_DUMP
-                " [--uniline] [--multiline] [--local-state] [--keymap FILE ]"
+                " [--uniline] [--multiline] [--consumed-mode={xkb|gtk}] [--no-state-report]"
 #endif
-                " [--format=<format>]"
-#ifndef KEYMAP_DUMP
+                " [--format FORMAT]"
+#ifdef KEYMAP_DUMP
+                " [--no-pretty] [--drop-unused]"
+#else
                 " [--enable-compose]"
+                " [--local-state] [--legacy-state-api true|false]"
+                " [--controls CONTROLS] [--modifiers-mapping MAPPING]"
+                " [--shortcuts-mask MASK] [--shortcuts-mapping]"
+                " [--keymap FILE]"
 #endif
                 "\n",
                 progname);
@@ -528,7 +537,8 @@ usage(FILE *fp, char *progname)
                 "                         state updates from the X11 server\n"
                 "    --legacy-state-api [=true|false]\n"
                 "                         use the legacy state API instead of the event API.\n"
-                "                         It implies --local-state if disabled.\n"
+                "                         It implies --local-state if explicitly disabled.\n"
+                "                         Default: false.\n"
                 "    --controls [<CONTROLS>]\n"
                 "                         use the given keyboard controls; available values are:\n"
                 "                         sticky-keys, latch-to-lock and latch-simultaneous.\n"
@@ -555,17 +565,20 @@ usage(FILE *fp, char *progname)
                 "                         It implies --local-state.\n"
                 "                         If <FILE> is \"-\" or missing, then load from stdin.\n"
 #endif
-                "    --format <FORMAT>    use keymap format <FORMAT>\n"
+                "    --format <FORMAT>    use keymap format <FORMAT> (default: '%s')\n"
 #ifdef KEYMAP_DUMP
                 "    --no-pretty          do not pretty-print when serializing a keymap\n"
                 "    --drop-unused        disable unused bits serialization\n"
 #else
                 "    -1, --uniline        enable uniline event output\n"
                 "    --multiline          enable multiline event output\n"
+                "    --consumed-mode={xkb|gtk}\n"
+                "                         select the consumed modifiers mode (default: xkb)\n"
                 "    --no-state-report    do not report changes to the state\n"
 #endif
                 "    --verbose            enable verbose debugging output\n"
-                "    --help               display this help and exit\n"
+                "    --help               display this help and exit\n",
+                xkb_keymap_get_format_label(DEFAULT_INPUT_KEYMAP_FORMAT)
         );
 }
 
@@ -610,6 +623,7 @@ main(int argc, char *argv[])
         OPT_VERBOSE,
         OPT_UNILINE,
         OPT_MULTILINE,
+        OPT_CONSUMED_MODE,
         OPT_NO_STATE_REPORT,
         OPT_COMPOSE,
         OPT_LOCAL_STATE,
@@ -633,6 +647,7 @@ main(int argc, char *argv[])
 #else
         {"uniline",              no_argument,            0, OPT_UNILINE},
         {"multiline",            no_argument,            0, OPT_MULTILINE},
+        {"consumed-mode",        required_argument,      0, OPT_CONSUMED_MODE},
         {"no-state-report",      no_argument,            0, OPT_NO_STATE_REPORT},
         {"enable-compose",       no_argument,            0, OPT_COMPOSE},
         {"local-state",          no_argument,            0, OPT_LOCAL_STATE},
@@ -647,6 +662,12 @@ main(int argc, char *argv[])
     };
 
     setlocale(LC_ALL, "");
+
+#ifndef KEYMAP_DUMP
+    /* Ensure synced with usage() and man page */
+    assert(use_events_api);
+    assert(consumed_mode == XKB_CONSUMED_MODE_XKB);
+#endif
 
     while (1) {
         int opt;
@@ -742,6 +763,19 @@ local_state:
         case OPT_MULTILINE:
             print_options &= ~PRINT_UNILINE;
             break;
+        case OPT_CONSUMED_MODE:
+            if (strcmp(optarg, "gtk") == 0) {
+                consumed_mode = XKB_CONSUMED_MODE_GTK;
+            } else if (strcmp(optarg, "xkb") == 0) {
+                consumed_mode = XKB_CONSUMED_MODE_XKB;
+            } else {
+                fprintf(stderr, "ERROR: invalid --consumed-mode \"%s\"\n",
+                        optarg);
+                usage(stderr, argv[0]);
+                ret = EXIT_INVALID_USAGE;
+                goto error_parse_args;
+            }
+            break;
         case OPT_NO_STATE_REPORT:
             report_state_changes = false;
             break;
@@ -829,9 +863,9 @@ too_much_arguments:
             xkb_context_unref(ctx);
             goto err_out;
         }
-        custom_keymap = xkb_keymap_new_from_file(ctx, file,
-                                                 keymap_format,
+        custom_keymap = xkb_keymap_new_from_file(ctx, file, keymap_format,
                                                  XKB_KEYMAP_COMPILE_NO_FLAGS);
+        fclose(file);
     }
 
     if (with_compose) {

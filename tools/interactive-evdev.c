@@ -313,8 +313,8 @@ process_event(struct keyboard *kbd, uint16_t type, uint16_t code, int32_t value)
             // TODO: better error handling
         } else {
             tools_print_events(NULL, kbd->state, kbd->state_events,
-                               kbd->compose_state, print_options,
-                               report_state_changes);
+                               kbd->compose_state, consumed_mode,
+                               print_options, report_state_changes);
         }
     } else {
         /* Use the legacy state API */
@@ -419,32 +419,48 @@ sigintr_handler(int signum)
 static void
 usage(FILE *fp, char *progname)
 {
-        fprintf(fp, "Usage: %s [--include=<path>] [--include-defaults] [--format=<format>]"
-                "[--rules=<rules>] [--model=<model>] [--layout=<layout>] "
-                "[--variant=<variant>] [--options=<options>] "
-                "[--enable-environment-names]\n",
-                progname);
-        fprintf(fp, "   or: %s --keymap <path to keymap file>\n",
-                progname);
-        fprintf(fp, "For both:\n"
-                        "          --format <FORMAT> (use keymap format FORMAT)\n"
-                        "          --verbose (enable verbose debugging output)\n"
-                        "          -1, --uniline (enable uniline event output)\n"
-                        "          --multiline (enable uniline event output)\n"
-                        "          --short (shorter event output)\n"
-                        "          --report-state-changes (report changes to the state)\n"
-                        "          --no-state-report (do not report changes to the state)\n"
-                        "          --legacy-state-api[=true|false] (use legacy state API instead of event API)\n"
-                        "          --controls (sticky-keys, latch-to-lock, latch-simultaneous)\n"
-                        "          --modifiers-mapping <MAPPING> (remap the modifiers)\n"
-                        "          --shortcuts-mask <MASK> (set the modifier mask for shortcuts tweaks)\n"
-                        "          --shortcuts-mapping <MAPPING> (set the layout indices mapping for shortcuts tweaks)\n"
-                        "          --enable-compose (enable Compose)\n"
-                        "          --consumed-mode={xkb|gtk} (select the consumed modifiers mode, default: xkb)\n"
-                        "          --without-x11-offset (don't add X11 keycode offset)\n"
-                    "Other:\n"
-                        "          --help (display this help and exit)\n"
-        );
+    fprintf(fp, "Usage: %s [--include=<path>] [--include-defaults] [--format=<format>]"
+            "[--rules=<rules>] [--model=<model>] [--layout=<layout>] "
+            "[--variant=<variant>] [--options=<options>] "
+            "[--enable-environment-names]\n"
+            "    or: %s --keymap <path to keymap file>\n"
+            "Options:\n"
+            " --format <FORMAT>\n"
+            "    Use keymap format FORMAT (default: '%s')\n"
+            " --verbose\n"
+            "    Enable verbose debugging output\n"
+            " -1, --uniline\n"
+            "    Enable uniline event output\n"
+            " --multiline\n"
+            "    Enable uniline event output\n"
+            " --short\n"
+            "    Shorter event output\n"
+            " --report-state-changes\n"
+            "    Report changes to the state\n"
+            " --no-state-report\n"
+            "    Do not report changes to the state\n"
+            " --legacy-state-api[=true|false]\n"
+            "    Use legacy state API instead of event API\n"
+            " --controls\n"
+            "    Sticky-keys, latch-to-lock, latch-simultaneous\n"
+            " --modifiers-mapping <MAPPING>\n"
+            "    Remap the modifiers\n"
+            " --shortcuts-mask <MASK>\n"
+            "    Set the modifier mask for shortcuts tweaks\n"
+            " --shortcuts-mapping <MAPPING>\n"
+            "    Set the layout indices mapping for shortcuts tweaks\n"
+            " --enable-compose\n"
+            "    Enable Compose\n"
+            " --consumed-mode={xkb|gtk}\n"
+            "    Select the consumed modifiers mode (default: xkb)\n"
+            " --without-x11-offset\n"
+            "    Don't add X11 keycode offset\n"
+            "Other:\n"
+            "    --help\n"
+            "    Display this help and exit\n",
+            progname, progname,
+            xkb_keymap_get_format_label(DEFAULT_INPUT_KEYMAP_FORMAT)
+    );
 }
 
 int
@@ -465,6 +481,7 @@ main(int argc, char *argv[])
     const char *variant = NULL;
     const char *options = NULL;
     const char *keymap_path = NULL;
+    bool with_keymap_file = false;
     const char *locale;
     struct sigaction act;
     enum options {
@@ -539,6 +556,9 @@ main(int argc, char *argv[])
     const char *raw_modifiers_mapping = NULL;
     const char *raw_shortcuts_mask = NULL;
 
+    /* Ensure synced with usage() and man page */
+    assert(consumed_mode == XKB_CONSUMED_MODE_XKB);
+
     while (1) {
         int option_index = 0;
         int opt = getopt_long(argc, argv, "*1h", opts, &option_index);
@@ -612,6 +632,7 @@ main(int argc, char *argv[])
         case OPT_KEYMAP:
             if (has_rmlvo_options)
                 goto input_format_error;
+            with_keymap_file = true;
             keymap_path = optarg;
             break;
         case OPT_WITHOUT_X11_OFFSET:
@@ -709,7 +730,14 @@ too_much_arguments:
             ret = EXIT_INVALID_USAGE;
             goto error_parse_args;
         }
+        with_keymap_file = true;
+    } else if (is_pipe_or_regular_file(STDIN_FILENO) && !with_keymap_file) {
+        /* No positional argument: piping detected */
+        with_keymap_file = true;
     }
+
+    if (isempty(keymap_path) || strcmp(keymap_path, "-") == 0)
+        keymap_path = NULL;
 
     if (!(print_options & PRINT_VERBOSE) && (print_options & PRINT_UNILINE)) {
         print_options &= ~PRINT_VERBOSE_ONE_LINE_FIELDS;
@@ -739,11 +767,18 @@ too_much_arguments:
             xkb_context_include_path_append(ctx, include);
     }
 
-    if (keymap_path) {
-        FILE *file = fopen(keymap_path, "rb");
+    if (with_keymap_file) {
+        FILE *file = NULL;
+        if (keymap_path) {
+            /* Read from regular file */
+            file = fopen(keymap_path, "rb");
+        } else {
+            /* Read from stdin */
+            file = tools_read_stdin();
+        }
         if (!file) {
-            fprintf(stderr, "ERROR: Couldn't open '%s': %s\n",
-                    keymap_path, strerror(errno));
+            fprintf(stderr, "ERROR: Failed to open keymap file \"%s\": %s\n",
+                    keymap_path ? keymap_path : "stdin", strerror(errno));
             goto out;
         }
         keymap = xkb_keymap_new_from_file(ctx, file, keymap_format,
