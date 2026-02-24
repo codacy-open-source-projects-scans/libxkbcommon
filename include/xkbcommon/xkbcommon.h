@@ -1420,12 +1420,31 @@ xkb_keymap_unref(struct xkb_keymap *keymap);
  * @since 1.12.0
  */
 enum xkb_keymap_serialize_flags {
-    /** Do not apply any flags. */
+    /**
+     * Do not apply any flags
+     *
+     * @since 1.12.0
+     */
     XKB_KEYMAP_SERIALIZE_NO_FLAGS = 0,
-    /** Enable pretty-printing */
+    /**
+     * Enable pretty-printing
+     *
+     * @since 1.12.0
+     */
     XKB_KEYMAP_SERIALIZE_PRETTY = (1 << 0),
-    /** Do not drop unused bits (key types, compatibility entries) */
+    /**
+     * Do not drop unused bits (key types, compatibility entries)
+     *
+     * @since 1.12.0
+     */
     XKB_KEYMAP_SERIALIZE_KEEP_UNUSED = (1 << 1),
+    /**
+     * Force all values to be explicit. This is useful mainly for debugging,
+     * as it may increase considerably the size of the serialization.
+     *
+     * @since 1.14.0
+     */
+    XKB_KEYMAP_SERIALIZE_EXPLICIT = (1 << 2),
 };
 
 /**
@@ -2246,6 +2265,12 @@ enum xkb_event_type {
      */
     XKB_EVENT_TYPE_KEY_DOWN = 1,
     /**
+     * **Key _repeated_** event
+     *
+     * @since 1.14.0
+     */
+    XKB_EVENT_TYPE_KEY_REPEATED,
+    /**
      * **Key _up_** event
      *
      * @since 1.14.0
@@ -2271,12 +2296,14 @@ xkb_event_get_type(const struct xkb_event *event);
 
 /**
  * Get the keycode associated to a [state event](@ref xkb_event) of type
- * `::XKB_EVENT_TYPE_KEY_DOWN` or `::XKB_EVENT_TYPE_KEY_UP`.
+ * `::XKB_EVENT_TYPE_KEY_DOWN`, `::XKB_EVENT_TYPE_KEY_REPEATED` or
+ * `::XKB_EVENT_TYPE_KEY_UP`.
  *
  * @param event The event to process.
  *
  * @returns For an event of type `::XKB_EVENT_TYPE_KEY_DOWN` or
- * `::XKB_EVENT_TYPE_KEY_UP`, returns the corresponding keycode.
+ * `::XKB_EVENT_TYPE_KEY_REPEATED` or `::XKB_EVENT_TYPE_KEY_UP`,
+ * returns the corresponding keycode.
  * @returns
  * The result is *undefined* if the given event has another type.
  *
@@ -2678,8 +2705,19 @@ xkb_state_machine_update_controls(struct xkb_state_machine *sm,
  * Specifies the direction of the key (press / release).
  */
 enum xkb_key_direction {
-    XKB_KEY_UP,   /**< The key was released. */
-    XKB_KEY_DOWN  /**< The key was pressed. */
+    /** The key was *released*. */
+    XKB_KEY_UP,
+    /** The key was *pressed*. */
+    XKB_KEY_DOWN,
+    /**
+     * The key was *repeated*.
+     *
+     * This should be used by the compositor only if it handles key repetition
+     * itself.
+     *
+     * @since 1.14.0
+     */
+    XKB_KEY_REPEATED
 };
 
 /**

@@ -6,6 +6,7 @@ xkb_keycodes {
 	<S>                  = 39;
 	<D>                  = 40;
 	<F>                  = 41;
+	<G>                  = 42;
 };
 
 xkb_types {
@@ -29,19 +30,24 @@ xkb_symbols {
 		actions[1]= [                     NoAction() ]
 	};
 	key <S>                  {
-		repeat= No,
+		repeat= Yes,
 		symbols[1]= [                              s ],
 		actions[1]= [       RedirectKey(keycode=<A>) ]
 	};
 	key <D>                  {
-		repeat= No,
+		repeat= Yes,
 		symbols[1]= [                              d ],
 		actions[1]= [ RedirectKey(keycode=<S>,modifiers=Shift,clearMods=Control) ]
 	};
 	key <F>                  {
 		repeat= No,
 		symbols[1]= [                              f ],
-		actions[1]= [                  RedirectKey() ]
+		actions[1]= [       RedirectKey(keycode=<F>) ]
+	};
+	key <G>                  {
+		repeat= No,
+		symbols[1]= [                              g ],
+		actions[1]= [       RedirectKey(keycode=<G>) ]
 	};
 };
 

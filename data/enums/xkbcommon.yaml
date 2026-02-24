@@ -43,6 +43,8 @@ xkb_keymap_serialize_flags:
     value: 1
   - name: XKB_KEYMAP_SERIALIZE_KEEP_UNUSED
     value: 2
+  - name: XKB_KEYMAP_SERIALIZE_EXPLICIT
+    value: 4
 xkb_keymap_key_iterator_flags:
   - name: XKB_KEYMAP_KEY_ITERATOR_NO_FLAGS
     value: 0
@@ -60,10 +62,12 @@ xkb_state_accessibility_flags:
 xkb_event_type:
   - name: XKB_EVENT_TYPE_KEY_DOWN
     value: 1
-  - name: XKB_EVENT_TYPE_KEY_UP
+  - name: XKB_EVENT_TYPE_KEY_REPEATED
     value: 2
-  - name: XKB_EVENT_TYPE_COMPONENTS_CHANGE
+  - name: XKB_EVENT_TYPE_KEY_UP
     value: 3
+  - name: XKB_EVENT_TYPE_COMPONENTS_CHANGE
+    value: 4
 xkb_state_component:
   - name: XKB_STATE_MODS_DEPRESSED
     value: 1
@@ -98,6 +102,8 @@ xkb_key_direction:
     value: 0
   - name: XKB_KEY_DOWN
     value: 1
+  - name: XKB_KEY_REPEATED
+    value: 2
 xkb_state_match:
   - name: XKB_STATE_MATCH_ANY
     value: 1

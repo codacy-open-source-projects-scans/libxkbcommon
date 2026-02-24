@@ -552,8 +552,14 @@ kbd_key(void *data, struct wl_keyboard *wl_kbd, uint32_t serial, uint32_t time,
     xkb_keycode_t keycode = key + EVDEV_OFFSET;
 
     char * const prefix = asprintf_safe("%s: ", seat->name_str);
-    const enum xkb_key_direction direction =
-        (state == WL_KEYBOARD_KEY_STATE_RELEASED) ? XKB_KEY_UP : XKB_KEY_DOWN;
+    const enum xkb_key_direction direction
+        = (state == WL_KEYBOARD_KEY_STATE_RELEASED)
+        ? XKB_KEY_UP
+#if HAVE_WL_KEYBOARD_KEY_STATE_REPEATED
+        : (state == WL_KEYBOARD_KEY_STATE_REPEATED)
+            ? XKB_KEY_REPEATED
+#endif
+            : XKB_KEY_DOWN;
 
     if (use_local_state && use_events_api) {
         /* Run our local state machine with the state event API */
@@ -786,7 +792,7 @@ seat_create(struct interactive_dpy *inter, struct wl_registry *registry,
     seat->global_name = name;
     seat->inter = inter;
     seat->wl_seat = wl_registry_bind(registry, name, &wl_seat_interface,
-                                     MIN(version, 5));
+                                     MIN(version, 10));
     wl_seat_add_listener(seat->wl_seat, &seat_listener, seat);
     if (seat->inter->compose_table) {
         seat->compose_state = xkb_compose_state_new(seat->inter->compose_table,
@@ -943,6 +949,7 @@ usage(FILE *fp, char *progname)
                 "    --format <FORMAT>           keymap format to use for both input and output\n"
                 "    --no-pretty                 do not pretty-print when serializing a keymap\n"
                 "    --drop-unused               disable unused bits serialization\n"
+                "    --explicit-values           force serializing all values\n"
                 "    --raw                       dump the raw keymap, without parsing it\n"
 #else
                 "    --format <FORMAT>  use keymap format FORMAT (default: '%s')\n"
@@ -1040,6 +1047,7 @@ main(int argc, char *argv[])
         OPT_KEYMAP_FORMAT,
         OPT_KEYMAP_NO_PRETTY,
         OPT_KEYMAP_DROP_UNUSED,
+        OPT_KEYMAP_EXPLICIT,
         OPT_KEYMAP,
         OPT_RAW,
     };
@@ -1052,6 +1060,7 @@ main(int argc, char *argv[])
         {"format",               required_argument,      0, OPT_KEYMAP_FORMAT},
         {"no-pretty",            no_argument,            0, OPT_KEYMAP_NO_PRETTY},
         {"drop-unused",          no_argument,            0, OPT_KEYMAP_DROP_UNUSED},
+        {"explicit-values",      no_argument,            0, OPT_KEYMAP_EXPLICIT},
         {"raw",                  no_argument,            0, OPT_RAW},
 #else
         {"uniline",              no_argument,            0, OPT_UNILINE},
@@ -1125,6 +1134,9 @@ main(int argc, char *argv[])
             break;
         case OPT_KEYMAP_DROP_UNUSED:
             serialize_flags &= ~XKB_KEYMAP_SERIALIZE_KEEP_UNUSED;
+            break;
+        case OPT_KEYMAP_EXPLICIT:
+            serialize_flags |= XKB_KEYMAP_SERIALIZE_EXPLICIT;
             break;
         case OPT_RAW:
             dump_raw_keymap = true;
