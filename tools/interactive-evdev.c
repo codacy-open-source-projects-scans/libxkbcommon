@@ -372,16 +372,15 @@ loop(struct keyboard *kbds)
     int ret = -1;
     struct keyboard *kbd;
     nfds_t nfds, i;
-    struct pollfd *fds = NULL;
 
     for (kbd = kbds, nfds = 0; kbd; kbd = kbd->next, nfds++) {}
-    fds = calloc(nfds, sizeof(*fds));
-    if (fds == NULL) {
+    struct pollfd *fds = calloc(nfds, sizeof(*fds));
+    if (!fds) {
         fprintf(stderr, "Out of memory");
         goto out;
     }
 
-    for (i = 0, kbd = kbds; kbd; kbd = kbd->next, i++) {
+    for (i = 0, kbd = kbds; kbd && i < nfds; kbd = kbd->next, i++) {
         fds[i].fd = kbd->fd;
         fds[i].events = POLLIN;
     }
@@ -396,7 +395,7 @@ loop(struct keyboard *kbds)
             goto out;
         }
 
-        for (i = 0, kbd = kbds; kbd; kbd = kbd->next, i++) {
+        for (i = 0, kbd = kbds; kbd && i < nfds; kbd = kbd->next, i++) {
             if (fds[i].revents != 0) {
                 ret = read_keyboard(kbd);
                 if (ret) {
@@ -429,6 +428,8 @@ usage(FILE *fp, char *progname)
             "Options:\n"
             " --format <FORMAT>\n"
             "    Use keymap format FORMAT (default: '%s')\n"
+            " --strict\n"
+            "    Parse using strict mode\n"
             " --verbose\n"
             "    Enable verbose debugging output\n"
             " -1, --uniline\n"
@@ -477,6 +478,8 @@ main(int argc, char *argv[])
     size_t num_includes = 0;
     bool use_env_names = false;
     enum xkb_keymap_format keymap_format = DEFAULT_INPUT_KEYMAP_FORMAT;
+    static enum xkb_keymap_compile_flags compile_flags =
+        (enum xkb_keymap_compile_flags) DEFAULT_KEYMAP_COMPILE_FLAGS;
     const char *rules = NULL;
     const char *model = NULL;
     const char *layout = NULL;
@@ -494,6 +497,7 @@ main(int argc, char *argv[])
         OPT_INCLUDE_DEFAULTS,
         OPT_ENABLE_ENV_NAMES,
         OPT_KEYMAP_FORMAT,
+        OPT_KEYMAP_STRICT_PARSER,
         OPT_RULES,
         OPT_MODEL,
         OPT_LAYOUT,
@@ -521,6 +525,7 @@ main(int argc, char *argv[])
         {"include-defaults",     no_argument,            0, OPT_INCLUDE_DEFAULTS},
         {"enable-environment-names", no_argument,        0, OPT_ENABLE_ENV_NAMES},
         {"format",               required_argument,      0, OPT_KEYMAP_FORMAT},
+        {"strict",               no_argument,            0, OPT_KEYMAP_STRICT_PARSER},
         {"rules",                required_argument,      0, OPT_RULES},
         {"model",                required_argument,      0, OPT_MODEL},
         {"layout",               required_argument,      0, OPT_LAYOUT},
@@ -600,6 +605,9 @@ main(int argc, char *argv[])
                 ret = EXIT_INVALID_USAGE;
                 goto error_parse_args;
             }
+            break;
+        case OPT_KEYMAP_STRICT_PARSER:
+            compile_flags |= XKB_KEYMAP_COMPILE_STRICT_MODE;
             break;
         case OPT_RULES:
             if (keymap_path)
@@ -784,7 +792,7 @@ too_much_arguments:
             goto out;
         }
         keymap = xkb_keymap_new_from_file(ctx, file, keymap_format,
-                                          XKB_KEYMAP_COMPILE_NO_FLAGS);
+                                          compile_flags);
         fclose(file);
     }
     else {
@@ -798,10 +806,10 @@ too_much_arguments:
 
         if (!rules && !model && !layout && !variant && !options)
             keymap = xkb_keymap_new_from_names2(ctx, NULL, keymap_format,
-                                                XKB_KEYMAP_COMPILE_NO_FLAGS);
+                                                compile_flags);
         else
             keymap = xkb_keymap_new_from_names2(ctx, &rmlvo, keymap_format,
-                                                XKB_KEYMAP_COMPILE_NO_FLAGS);
+                                                compile_flags);
 
         if (!keymap) {
             fprintf(stderr,

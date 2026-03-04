@@ -270,6 +270,7 @@ AddInterp(CompatInfo *info, SymInterpInfo *new, bool same_file)
 
 /***====================================================================***/
 
+// TODO: more lenient?
 static bool
 ResolveStateAndPredicate(ExprDef *expr, enum xkb_match_operation *pred_rtrn,
                          xkb_mod_mask_t *mods_rtrn, CompatInfo *info)
@@ -527,10 +528,17 @@ SetInterpField(CompatInfo *info, SymInterpInfo *si, const char *field,
             for (ExprDef *act = value->actions.actions;
                  act; act = (ExprDef *) act->common.next) {
                 union xkb_action toAct = { 0 };
-                if (!HandleActionDef(info->keymap_info, &info->default_actions,
-                                     &info->mods, act, &toAct)) {
+                switch (HandleActionDef(info->keymap_info,
+                                        &info->default_actions,
+                                        &info->mods, act, &toAct)) {
+                case PARSER_RECOVERABLE_ERROR:
+                    toAct.type = ACTION_TYPE_NONE;
+                    break;
+                case PARSER_FATAL_ERROR:
                     darray_free(actions);
                     return false;
+                default:
+                    ;
                 }
                 if (toAct.type == ACTION_TYPE_NONE) {
                     /* Drop action */
@@ -561,12 +569,21 @@ SetInterpField(CompatInfo *info, SymInterpInfo *si, const char *field,
                 darray_steal(actions, &si->interp.a.actions, NULL);
             }
         }
-        else if (HandleActionDef(info->keymap_info, &info->default_actions,
-                                 &info->mods, value, &si->interp.a.action))
-            si->interp.num_actions =
-                (si->interp.a.action.type != ACTION_TYPE_NONE);
-        else
-            return false;
+        else {
+            switch (HandleActionDef(info->keymap_info,
+                                    &info->default_actions,
+                                    &info->mods, value, &si->interp.a.action)) {
+            case PARSER_RECOVERABLE_ERROR:
+                si->interp.a.action.type = ACTION_TYPE_NONE;
+                si->interp.num_actions = 0;
+                break;
+            case PARSER_FATAL_ERROR:
+                return false;
+            default:
+                si->interp.num_actions =
+                    (si->interp.a.action.type != ACTION_TYPE_NONE);
+            }
+        }
 
         si->defined |= SI_FIELD_ACTION;
     }
@@ -614,8 +631,9 @@ SetInterpField(CompatInfo *info, SymInterpInfo *si, const char *field,
         si->defined |= SI_FIELD_LEVEL_ONE_ONLY;
     }
     else {
-        return ReportBadField(info->ctx, "symbol interpretation", field,
-                              siText(si, info));
+        ReportBadField(info->ctx, "symbol interpretation", field,
+                       siText(si, info));
+        return !(info->keymap_info->strict & PARSER_NO_UNKNOWN_INTERPRET_FIELDS);
     }
 
     return true;
@@ -626,7 +644,6 @@ SetLedMapField(CompatInfo *info, LedInfo *ledi, const char *field,
                ExprDef *arrayNdx, ExprDef **value_ptr)
 {
     ExprDef * restrict const value = *value_ptr;
-    bool ok = true;
 
     if (istreq(field, "modifiers") || istreq(field, "mods")) {
         if (arrayNdx)
@@ -737,10 +754,10 @@ SetLedMapField(CompatInfo *info, LedInfo *ledi, const char *field,
                 "Unknown field \"%s\" in map for %s indicator; "
                 "Definition ignored\n",
                 field, LEDText(info, ledi));
-        ok = false;
+        return !(info->keymap_info->strict & PARSER_NO_UNKNOWN_LED_FIELDS);
     }
 
-    return ok;
+    return true;
 }
 
 static bool
@@ -760,7 +777,8 @@ HandleGlobalVar(CompatInfo *info, VarDef *stmt)
             ? MERGE_OVERRIDE
             : stmt->merge;
         ret = SetInterpField(info, &temp, field, ndx, stmt->value);
-        MergeInterp(info, &info->default_interp, &temp, true);
+        if (ret)
+            MergeInterp(info, &info->default_interp, &temp, true);
     }
     else if (elem && istreq(elem, "indicator")) {
         LedInfo temp = {0};
@@ -770,16 +788,19 @@ HandleGlobalVar(CompatInfo *info, VarDef *stmt)
             ? MERGE_OVERRIDE
             : stmt->merge;
         ret = SetLedMapField(info, &temp, field, ndx, &stmt->value);
-        MergeLedMap(info, &info->default_led, &temp, true);
+        if (ret)
+            MergeLedMap(info, &info->default_led, &temp, true);
     }
     else if (elem) {
-        ret = SetDefaultActionField(info->keymap_info, &info->default_actions,
-                                    &info->mods, elem, field, ndx,
-                                    &stmt->value, stmt->merge);
+        ret = (SetDefaultActionField(info->keymap_info, &info->default_actions,
+                                     &info->mods, elem, field, ndx,
+                                     &stmt->value, stmt->merge) !=
+               PARSER_FATAL_ERROR);
     } else {
         log_err(info->ctx, XKB_ERROR_UNKNOWN_DEFAULT_FIELD,
                 "Default defined for unknown field \"%s\"; Ignored\n", field);
-        return false;
+        return !(info->keymap_info->strict &
+                 PARSER_NO_UNKNOWN_COMPAT_GLOBAL_FIELDS);
     }
     return ret;
 }
@@ -792,9 +813,10 @@ HandleInterpBody(CompatInfo *info, VarDef *def, SymInterpInfo *si)
     ExprDef *arrayNdx;
 
     for (; def; def = (VarDef *) def->common.next) {
-        ok = ExprResolveLhs(info->ctx, def->name, &elem, &field, &arrayNdx);
-        if (!ok)
+        if (!ExprResolveLhs(info->ctx, def->name, &elem, &field, &arrayNdx)) {
+            ok = false;
             continue;
+        }
         if (elem) {
             log_err(info->ctx, XKB_LOG_MESSAGE_NO_ID,
                     "Cannot set a global default value for \"%s\" element from "
@@ -804,7 +826,8 @@ HandleInterpBody(CompatInfo *info, VarDef *def, SymInterpInfo *si)
             ok = false;
             continue;
         }
-        ok = SetInterpField(info, si, field, arrayNdx, def->value);
+        if (!SetInterpField(info, si, field, arrayNdx, def->value))
+            ok = false;
     }
 
     return ok;
@@ -846,16 +869,12 @@ HandleInterpDef(CompatInfo *info, InterpDef *def)
 static bool
 HandleLedMapDef(CompatInfo *info, LedMapDef *def)
 {
-    LedInfo ledi;
-    VarDef *var;
-    bool ok;
-
-    ledi = info->default_led;
+    LedInfo ledi = info->default_led;
     ledi.merge = def->merge;
     ledi.led.name = def->name;
 
-    ok = true;
-    for (var = def->body; var != NULL; var = (VarDef *) var->common.next) {
+    bool ok = true;
+    for (VarDef *var = def->body; var != NULL; var = (VarDef *) var->common.next) {
         const char *elem, *field;
         ExprDef *arrayNdx;
         if (!ExprResolveLhs(info->ctx, var->name, &elem, &field, &arrayNdx)) {
@@ -870,14 +889,12 @@ HandleLedMapDef(CompatInfo *info, LedMapDef *def)
             ok = false;
         }
         else {
-            ok = SetLedMapField(info, &ledi, field, arrayNdx, &var->value) && ok;
+            if (!SetLedMapField(info, &ledi, field, arrayNdx, &var->value))
+                ok = false;
         }
     }
 
-    if (ok)
-        return AddLedMap(info, &ledi, true);
-
-    return false;
+    return ok && AddLedMap(info, &ledi, true);
 }
 
 static void
@@ -910,6 +927,15 @@ HandleCompatMapFile(CompatInfo *info, XkbFile *file)
             break;
         case STMT_VMOD:
             ok = HandleVModDef(info->ctx, &info->mods, (VModDef *) stmt);
+            break;
+        case STMT_UNKNOWN_DECLARATION:
+        case STMT_UNKNOWN_COMPOUND:
+            log_err(info->ctx, XKB_ERROR_UNKNOWN_STATEMENT,
+                    "Unsupported compatibility %s statement \"%s\"; Ignoring\n",
+                    (stmt->type == STMT_UNKNOWN_COMPOUND
+                        ? "compound" : "declaration"),
+                    ((UnknownStatement *)stmt)->name);
+            ok = !(info->keymap_info->strict & PARSER_NO_UNKNOWN_STATEMENTS);
             break;
         default:
             log_err(info->ctx, XKB_LOG_MESSAGE_NO_ID,

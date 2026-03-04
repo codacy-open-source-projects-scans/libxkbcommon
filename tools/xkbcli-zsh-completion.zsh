@@ -71,6 +71,7 @@ _xkbcli_controls() {
 _xkbcli_commands() {
 	local -a commands=(
 		'list:list available rules, models, layouts, variants and options'
+		'info:print information about libxkbcommon configuration'
 		'interactive:interactive debugger for XKB keymaps'
 		'interactive-wayland:interactive debugger for XKB keymaps for Wayland'
 		'interactive-x11:interactive debugger for XKB keymaps for X11'
@@ -113,6 +114,7 @@ local -a interactive_common=(
 	'--consumed-mode=[select the consumed modifiers mode]:mode:(xkb gtk)'
 	'(--report-state-changes)--no-state-report[do not report changes to the state]'
 	'--format=[use the given keymap format]:xkb format:(v1 v2)'
+	'--strict[parse using the strict mode]'
 	'--enable-compose[enable Compose]'
 	'--legacy-state-api=[use the legacy state API instead of state event API]:state:(true false)'
 	'(--local-state --legacy-state-api)--modifiers-mapping=[use the given modifiers mapping]:modifiers mapping:_xkbcli_modifiers_mapping' \
@@ -150,6 +152,7 @@ local -a dump_common=(
 	'(--format)--input-format=[use the given input keymap format]:xkb format:(v1 v2)'
 	'(--format)--output-format=[use the given output keymap format]:xkb format:(v1 v2)'
 	'(--input-format --output-format)--format=[use the given keymap format for input and output]:xkb format:(v1 v2)'
+	'--strict[parse using the strict mode]'
 	'--no-pretty[do not pretty print when serializing a keymap]'
 	'--drop-unused[disable unused bits serialization]'
 	'--explicit-values[force serializing all values]'
@@ -176,6 +179,7 @@ _xkbcli-compile-keymap() {
 		'--include-defaults[add the default set of include directories]' \
 		'(--format)--input-format=[the keymap format to use for parsing]:xkb format:(v1 v2)' \
 		'(--input-format --output-format)--format=[the keymap format to use for parsing and serializing]:xkb format:(v1 v2)' \
+		'--strict[parse using the strict mode]' \
 		'(--rules --model --layout --variant --options --enable-environment-names)--keymap=[use the given keymap file]:keymap:_xkbcli_keymap' \
 		"$rmlvo_opts_common[@]" \
 		+ '(output)' \

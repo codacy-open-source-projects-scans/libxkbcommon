@@ -220,6 +220,20 @@ endif
 if cc.links('int main(){if(__builtin_expect(1<0,0)){}}', name: '__builtin_expect')
     configh_data.set('HAVE___BUILTIN_EXPECT', 1)
 endif
+# Test if counted_by attribute is available, and supported on pointer fields
+# (not just flexible array fields).
+if cc.compiles('''
+    struct test {
+        int count;
+        int *items __attribute__((counted_by(count)));
+    };
+    int main(void) {
+        struct test t = {0};
+        return 0;
+    }
+''', name: 'counted_by attribute for pointers')
+    configh_data.set('HAVE_ATTR_COUNTED_BY', 1)
+endif
 if cc.has_header_symbol('unistd.h', 'eaccess', prefix: system_ext_define)
     configh_data.set('HAVE_EACCESS', 1)
 endif
@@ -380,7 +394,7 @@ libxkbcommon_sources = [
     'src/keysym.h',
     'src/keysym-case-mappings.c',
     'src/keysym-utf.c',
-    'src/ks_tables.h',
+    'src/keysym-names.h',
     'src/keymap.c',
     'src/keymap.h',
     'src/keymap-compare.c',
@@ -1113,6 +1127,11 @@ test(
 test(
     'buffercomp',
     executable('test-buffercomp', 'test/buffercomp.c', dependencies: test_dep),
+    env: test_env,
+)
+test(
+    'lenient-mode',
+    executable('test-lenient-mode', 'test/lenient-mode.c', dependencies: test_dep),
     env: test_env,
 )
 if has_extensions_directories

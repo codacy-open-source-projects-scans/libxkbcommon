@@ -43,6 +43,7 @@ typedef struct {
     struct xkb_mod_set mods;
 
     struct xkb_context *ctx;
+    const struct xkb_keymap_info *keymap_info;
 } KeyTypesInfo;
 
 /***====================================================================***/
@@ -84,12 +85,13 @@ ReportTypeBadType(KeyTypesInfo *info, enum xkb_message_code code,
 /***====================================================================***/
 
 static void
-InitKeyTypesInfo(KeyTypesInfo *info, struct xkb_context *ctx,
+InitKeyTypesInfo(KeyTypesInfo *info, const struct xkb_keymap_info *keymap_info,
                  unsigned int include_depth,
                  const struct xkb_mod_set *mods)
 {
     memset(info, 0, sizeof(*info));
-    info->ctx = ctx;
+    info->ctx = keymap_info->keymap.ctx;
+    info->keymap_info = keymap_info;
     info->include_depth = include_depth;
     InitVMods(&info->mods, mods, include_depth > 0);
 }
@@ -210,7 +212,7 @@ HandleIncludeKeyTypes(KeyTypesInfo *info, IncludeStmt *include)
         return false;
     }
 
-    InitKeyTypesInfo(&included, info->ctx, info->include_depth + 1,
+    InitKeyTypesInfo(&included, info->keymap_info, info->include_depth + 1,
                      &info->mods);
     included.name = steal(&include->stmt);
 
@@ -227,7 +229,7 @@ HandleIncludeKeyTypes(KeyTypesInfo *info, IncludeStmt *include)
             return false;
         }
 
-        InitKeyTypesInfo(&next_incl, info->ctx, info->include_depth + 1,
+        InitKeyTypesInfo(&next_incl, info->keymap_info, info->include_depth + 1,
                          &included.mods);
 
         HandleKeyTypesFile(&next_incl, file);
@@ -252,10 +254,12 @@ SetModifiers(KeyTypesInfo *info, KeyTypeInfo *type, ExprDef *arrayNdx,
 {
     xkb_mod_mask_t mods = 0;
 
-    if (arrayNdx)
-        log_warn(info->ctx, XKB_LOG_MESSAGE_NO_ID,
-                 "The modifiers field of a key type is not an array; "
-                 "Illegal array subscript ignored\n");
+    if (arrayNdx) {
+        log_err(info->ctx, XKB_LOG_MESSAGE_NO_ID,
+                "The modifiers field of a key type is not an array; "
+                "Illegal array subscript ignored\n");
+        return false;
+    }
 
     if (!ExprResolveModMask(info->ctx, value, MOD_BOTH, &info->mods, &mods)) {
         log_err(info->ctx, XKB_ERROR_UNSUPPORTED_MODIFIER_MASK,
@@ -580,6 +584,7 @@ SetKeyTypeField(KeyTypesInfo *info, KeyTypeInfo *type,
         log_err(info->ctx, XKB_ERROR_UNKNOWN_FIELD,
                 "Unknown field \"%s\" in key type \"%s\"; Definition ignored\n",
                 field, TypeTxt(info, type));
+        ok = !(info->keymap_info->strict & PARSER_NO_UNKNOWN_TYPE_FIELDS);
     }
 
     type->defined |= type_field;
@@ -594,10 +599,12 @@ HandleKeyTypeBody(KeyTypesInfo *info, VarDef *def, KeyTypeInfo *type)
     ExprDef *arrayNdx;
 
     for (; def; def = (VarDef *) def->common.next) {
-        ok = ExprResolveLhs(info->ctx, def->name, &elem, &field,
-                            &arrayNdx);
-        if (!ok)
+        if (!ExprResolveLhs(info->ctx, def->name, &elem, &field,
+                            &arrayNdx)) {
+            /* internal error, already reported */
+            ok = false;
             continue;
+        }
 
         if (elem) {
             if (istreq(elem, "type")) {
@@ -616,7 +623,8 @@ HandleKeyTypeBody(KeyTypesInfo *info, VarDef *def, KeyTypeInfo *type)
             continue;
         }
 
-        ok = SetKeyTypeField(info, type, field, arrayNdx, def->value);
+        if (!SetKeyTypeField(info, type, field, arrayNdx, def->value))
+            ok = false;
     }
 
     return ok;
@@ -655,10 +663,10 @@ HandleGlobalVar(KeyTypesInfo *info, VarDef *stmt)
     ExprDef *arrayNdx;
 
     if (!ExprResolveLhs(info->ctx, stmt->name, &elem, &field,
-                        &arrayNdx))
+                        &arrayNdx)) {
         return false;           /* internal error, already reported */
-
-    if (elem && istreq(elem, "type")) {
+    }
+    else if (elem && istreq(elem, "type")) {
         log_err(info->ctx, XKB_ERROR_WRONG_STATEMENT_TYPE,
                 "Support for changing the default type has been removed; "
                 "Statement ignored\n");
@@ -668,12 +676,14 @@ HandleGlobalVar(KeyTypesInfo *info, VarDef *stmt)
         log_err(info->ctx, XKB_ERROR_UNKNOWN_DEFAULT_FIELD,
                 "Default defined for unknown element \"%s\"; "
                 "Value for field \"%s.%s\" ignored\n", elem, elem, field);
+        return !(info->keymap_info->strict & PARSER_NO_UNKNOWN_STATEMENTS);
     }
     else if (field) {
         log_err(info->ctx, XKB_ERROR_UNKNOWN_DEFAULT_FIELD,
                 "Default defined for unknown field \"%s\"; Ignored\n", field);
+        return !(info->keymap_info->strict &
+                 PARSER_NO_UNKNOWN_TYPES_GLOBAL_FIELDS);
     }
-
     return false;
 }
 
@@ -698,6 +708,15 @@ HandleKeyTypesFile(KeyTypesInfo *info, XkbFile *file)
             break;
         case STMT_VMOD:
             ok = HandleVModDef(info->ctx, &info->mods, (VModDef *) stmt);
+            break;
+        case STMT_UNKNOWN_DECLARATION:
+        case STMT_UNKNOWN_COMPOUND:
+            log_err(info->ctx, XKB_ERROR_UNKNOWN_STATEMENT,
+                    "Unsupported types %s statement \"%s\"; Ignoring\n",
+                    (stmt->type == STMT_UNKNOWN_COMPOUND
+                        ? "compound" : "declaration"),
+                    ((UnknownStatement *)stmt)->name);
+            ok = !(info->keymap_info->strict & PARSER_NO_UNKNOWN_STATEMENTS);
             break;
         default:
             log_err(info->ctx, XKB_ERROR_WRONG_STATEMENT_TYPE,
@@ -841,7 +860,7 @@ CompileKeyTypes(XkbFile *file, struct xkb_keymap_info *keymap_info)
 {
     KeyTypesInfo info;
 
-    InitKeyTypesInfo(&info, keymap_info->keymap.ctx, 0,
+    InitKeyTypesInfo(&info, keymap_info, 0,
                      &keymap_info->keymap.mods);
 
     if (file != NULL)

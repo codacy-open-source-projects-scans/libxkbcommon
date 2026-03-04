@@ -342,7 +342,7 @@ translate_action(union xkb_action *action, const xcb_xkb_action_t *wire,
     default:
         {} /* Label followed by declaration requires C23 */
         /* Ensure to not miss `xkb_action_type` updates */
-        static_assert(ACTION_TYPE_INTERNAL == 19 &&
+        static_assert(ACTION_TYPE_INTERNAL == 20 &&
                       ACTION_TYPE_INTERNAL + 1 == _ACTION_TYPE_NUM_ENTRIES,
                       "Missing action type");
 
@@ -984,6 +984,7 @@ get_type_names(struct xkb_keymap *keymap, struct x11_atom_interner *interner,
 
         /* Allocate names for all levels, even if some names are missing */
         ALLOC_OR_FAIL(type->level_names, type->num_levels);
+        type->num_level_names = type->num_levels;
 
         x11_atom_interner_adopt_atom(interner, wire_type_name, &type->name);
         for (size_t j = 0; j < wire_num_levels; j++) {
@@ -995,7 +996,6 @@ get_type_names(struct xkb_keymap *keymap, struct x11_atom_interner *interner,
         for (size_t j = wire_num_levels; j < type->num_levels; j++)
             type->level_names[j] = XKB_ATOM_NONE;
 
-        type->num_level_names = type->num_levels;
         kt_level_names_iter += wire_num_levels;
         key_type_names_iter++;
         n_levels_per_type_iter++;

@@ -56,6 +56,8 @@ struct keyboard {
 };
 
 static bool terminate;
+static enum xkb_keymap_compile_flags compile_flags =
+    (enum xkb_keymap_compile_flags) DEFAULT_KEYMAP_COMPILE_FLAGS;
 #ifdef KEYMAP_DUMP
 static_assert(DEFAULT_OUTPUT_KEYMAP_FORMAT == XKB_KEYMAP_USE_ORIGINAL_FORMAT,
               "Out of sync usage()");
@@ -532,7 +534,7 @@ usage(FILE *fp, char *progname)
 #ifndef KEYMAP_DUMP
                 " [--uniline] [--multiline] [--consumed-mode={xkb|gtk}] [--no-state-report]"
 #endif
-                " [--format FORMAT]"
+                " [--format FORMAT] [--strict]"
 #ifdef KEYMAP_DUMP
                 " [--no-pretty] [--drop-unused]"
 #else
@@ -580,6 +582,7 @@ usage(FILE *fp, char *progname)
                 "                         If <FILE> is \"-\" or missing, then load from stdin.\n"
 #endif
                 "    --format <FORMAT>    use keymap format <FORMAT> (default: '%s')\n"
+                "    --strict             parse using strict mode\n"
 #ifdef KEYMAP_DUMP
                 "    --no-pretty          do not pretty-print when serializing a keymap\n"
                 "    --drop-unused        disable unused bits serialization\n"
@@ -648,6 +651,7 @@ main(int argc, char *argv[])
         OPT_SHORTCUTS_TWEAK_MASK,
         OPT_SHORTCUTS_TWEAK_MAPPING,
         OPT_KEYMAP_FORMAT,
+        OPT_KEYMAP_STRICT_PARSER,
         OPT_KEYMAP_NO_PRETTY,
         OPT_KEYMAP_DROP_UNUSED,
         OPT_KEYMAP_EXPLICIT,
@@ -657,6 +661,7 @@ main(int argc, char *argv[])
         {"help",                 no_argument,            0, 'h'},
         {"verbose",              no_argument,            0, OPT_VERBOSE},
         {"format",               required_argument,      0, OPT_KEYMAP_FORMAT},
+        {"strict",               no_argument,            0, OPT_KEYMAP_STRICT_PARSER},
 #ifdef KEYMAP_DUMP
         {"no-pretty",            no_argument,            0, OPT_KEYMAP_NO_PRETTY},
         {"drop-unused",          no_argument,            0, OPT_KEYMAP_DROP_UNUSED},
@@ -709,6 +714,9 @@ main(int argc, char *argv[])
                 fprintf(stderr, "ERROR: invalid --format \"%s\"\n", optarg);
                 goto invalid_usage;
             }
+            break;
+        case OPT_KEYMAP_STRICT_PARSER:
+            compile_flags |= XKB_KEYMAP_COMPILE_STRICT_MODE;
             break;
 #ifdef KEYMAP_DUMP
         case OPT_KEYMAP_NO_PRETTY:
@@ -915,7 +923,9 @@ too_much_arguments:
             goto err_out;
         }
         custom_keymap = xkb_keymap_new_from_file(ctx, file, keymap_format,
-                                                 XKB_KEYMAP_COMPILE_NO_FLAGS);
+                                                 compile_flags);
+        if (!custom_keymap)
+            goto err_keymap;
         fclose(file);
     }
 
@@ -961,6 +971,8 @@ too_much_arguments:
 err_window:
     xkb_compose_table_unref(compose_table);
 err_compose:
+    xkb_keymap_unref(custom_keymap);
+err_keymap:
 #endif
     deinit_kbd(&core_kbd);
 err_ctx:
@@ -968,9 +980,6 @@ err_ctx:
 err_conn:
     xcb_disconnect(conn);
 err_out:
-#ifndef KEYMAP_DUMP
-    xkb_keymap_unref(custom_keymap);
-#endif
     ret = (ret >= 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 error_parse_args:
 #ifndef KEYMAP_DUMP

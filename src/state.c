@@ -394,7 +394,7 @@ xkb_action_breaks_latch(const union xkb_action *action,
     default:
         {} /* Label followed by declaration requires C23 */
         /* Ensure to not miss `xkb_action_type` updates */
-        static_assert(ACTION_TYPE_INTERNAL == 19 &&
+        static_assert(ACTION_TYPE_INTERNAL == 20 &&
                       ACTION_TYPE_INTERNAL + 1 == _ACTION_TYPE_NUM_ENTRIES,
                       "Missing action type");
         return false;
@@ -960,24 +960,22 @@ append_redirect_key_events(struct xkb_state *state,
      * use the current state.
      */
     struct xkb_event *event;
-    const struct state_components *last_components = &state->components;
+    struct state_components last_components = state->components;
     darray_foreach_reverse(event, events->queue) {
         if (event->type == XKB_EVENT_TYPE_COMPONENTS_CHANGE) {
-            last_components = &event->components.components;
+            last_components = event->components.components;
             break;
         }
     }
-    /* Ensure that only tweaks could have affected the queue */
-    assert((last_components != &state->components) ^ darray_empty(events->queue));
 
     if (mask) {
-        struct state_components new = *last_components;
+        struct state_components new = last_components;
         new.base_mods = (new.base_mods & ~mask) | redirect->mods;
         new.latched_mods = (new.latched_mods & ~mask) | redirect->mods;
         new.locked_mods = (new.locked_mods & ~mask) | redirect->mods;
         new.mods = (new.mods & ~mask) | redirect->mods;
 
-        changed = get_state_component_changes(last_components, &new);
+        changed = get_state_component_changes(&last_components, &new);
         if (changed) {
             darray_append(events->queue, (struct xkb_event) {
                 .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
@@ -1003,7 +1001,7 @@ append_redirect_key_events(struct xkb_state *state,
         darray_append(events->queue, (struct xkb_event) {
             .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
             .components = {
-                .components = *last_components,
+                .components = last_components,
                 .changed = changed
             }
         });
@@ -2410,11 +2408,11 @@ struct xkb_state_machine {
                 /** Real modifier mask */
                 xkb_mod_mask_t mask;
                 /** Modifiers re-mappings */
+                darray_size_t mappings_num;
                 struct state_machine_mods_mapping {
                     xkb_mod_mask_t source;
                     xkb_mod_mask_t target;
-                } *mappings;
-                darray_size_t mappings_num;
+                } * mappings ATTR_COUNTED_BY(mappings_num);
             } modifiers;
 
             /** Shortcuts tweak */

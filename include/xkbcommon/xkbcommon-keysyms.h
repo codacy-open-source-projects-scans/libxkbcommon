@@ -3056,18 +3056,18 @@ SOFTWARE.
 /* Use: XKB_KEY_braille_dot_8                _EVDEVK(0x1f8)     v2.6.17 KEY_BRL_DOT8 */
 /* Use: XKB_KEY_braille_dot_9                _EVDEVK(0x1f9)     v2.6.23 KEY_BRL_DOT9 */
 /* Use: XKB_KEY_braille_dot_1                _EVDEVK(0x1fa)     v2.6.23 KEY_BRL_DOT10 */
-#define XKB_KEY_XF86Numeric0                 0x10081200      /* v2.6.28 KEY_NUMERIC_0 */
-#define XKB_KEY_XF86Numeric1                 0x10081201      /* v2.6.28 KEY_NUMERIC_1 */
-#define XKB_KEY_XF86Numeric2                 0x10081202      /* v2.6.28 KEY_NUMERIC_2 */
-#define XKB_KEY_XF86Numeric3                 0x10081203      /* v2.6.28 KEY_NUMERIC_3 */
-#define XKB_KEY_XF86Numeric4                 0x10081204      /* v2.6.28 KEY_NUMERIC_4 */
-#define XKB_KEY_XF86Numeric5                 0x10081205      /* v2.6.28 KEY_NUMERIC_5 */
-#define XKB_KEY_XF86Numeric6                 0x10081206      /* v2.6.28 KEY_NUMERIC_6 */
-#define XKB_KEY_XF86Numeric7                 0x10081207      /* v2.6.28 KEY_NUMERIC_7 */
-#define XKB_KEY_XF86Numeric8                 0x10081208      /* v2.6.28 KEY_NUMERIC_8 */
-#define XKB_KEY_XF86Numeric9                 0x10081209      /* v2.6.28 KEY_NUMERIC_9 */
-#define XKB_KEY_XF86NumericStar              0x1008120a      /* v2.6.28 KEY_NUMERIC_STAR */
-#define XKB_KEY_XF86NumericPound             0x1008120b      /* v2.6.28 KEY_NUMERIC_POUND */
+#define XKB_KEY_XF86Numeric0                 0x10081200      /* v2.6.28 KEY_NUMERIC_0 <U+0030 DIGIT ZERO> */
+#define XKB_KEY_XF86Numeric1                 0x10081201      /* v2.6.28 KEY_NUMERIC_1 <U+0031 DIGIT ONE> */
+#define XKB_KEY_XF86Numeric2                 0x10081202      /* v2.6.28 KEY_NUMERIC_2 <U+0032 DIGIT TWO> */
+#define XKB_KEY_XF86Numeric3                 0x10081203      /* v2.6.28 KEY_NUMERIC_3 <U+0033 DIGIT THREE> */
+#define XKB_KEY_XF86Numeric4                 0x10081204      /* v2.6.28 KEY_NUMERIC_4 <U+0034 DIGIT FOUR> */
+#define XKB_KEY_XF86Numeric5                 0x10081205      /* v2.6.28 KEY_NUMERIC_5 <U+0035 DIGIT FIVE> */
+#define XKB_KEY_XF86Numeric6                 0x10081206      /* v2.6.28 KEY_NUMERIC_6 <U+0036 DIGIT SIX> */
+#define XKB_KEY_XF86Numeric7                 0x10081207      /* v2.6.28 KEY_NUMERIC_7 <U+0037 DIGIT SEVEN> */
+#define XKB_KEY_XF86Numeric8                 0x10081208      /* v2.6.28 KEY_NUMERIC_8 <U+0038 DIGIT EIGHT> */
+#define XKB_KEY_XF86Numeric9                 0x10081209      /* v2.6.28 KEY_NUMERIC_9 <U+0039 DIGIT NINE> */
+#define XKB_KEY_XF86NumericStar              0x1008120a      /* v2.6.28 KEY_NUMERIC_STAR <U+002A ASTERISK> */
+#define XKB_KEY_XF86NumericPound             0x1008120b      /* v2.6.28 KEY_NUMERIC_POUND <U+0023 NUMBER SIGN> */
 #define XKB_KEY_XF86NumericA                 0x1008120c      /* v4.1    KEY_NUMERIC_A */
 #define XKB_KEY_XF86NumericB                 0x1008120d      /* v4.1    KEY_NUMERIC_B */
 #define XKB_KEY_XF86NumericC                 0x1008120e      /* v4.1    KEY_NUMERIC_C */
@@ -3108,6 +3108,8 @@ SOFTWARE.
 #define XKB_KEY_XF86DoNotDisturb             0x1008124f      /* v6.10   KEY_DO_NOT_DISTURB */
 #define XKB_KEY_XF86BrightnessMin            0x10081250      /* v3.16   KEY_BRIGHTNESS_MIN */
 #define XKB_KEY_XF86BrightnessMax            0x10081251      /* v3.16   KEY_BRIGHTNESS_MAX */
+#define XKB_KEY_XF86ElectronicPrivacyScreenOn  0x10081252      /* v6.18   KEY_EPRIVACY_SCREEN_ON */
+#define XKB_KEY_XF86ElectronicPrivacyScreenOff 0x10081253      /* v6.18   KEY_EPRIVACY_SCREEN_OFF */
 #define XKB_KEY_XF86KbdInputAssistPrev       0x10081260      /* v3.18   KEY_KBDINPUTASSIST_PREV */
 #define XKB_KEY_XF86KbdInputAssistNext       0x10081261      /* v3.18   KEY_KBDINPUTASSIST_NEXT */
 #define XKB_KEY_XF86KbdInputAssistPrevgroup  0x10081262      /* v3.18   KEY_KBDINPUTASSIST_PREVGROUP */

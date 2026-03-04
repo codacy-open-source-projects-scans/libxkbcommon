@@ -106,6 +106,7 @@ enum xkb_action_type {
     ACTION_TYPE_CTRL_LOCK,
     ACTION_TYPE_REDIRECT_KEY,
     ACTION_TYPE_UNSUPPORTED_LEGACY,
+    ACTION_TYPE_UNKNOWN,
     ACTION_TYPE_PRIVATE,
     ACTION_TYPE_INTERNAL, /* Action specific and internal to xkbcommon */
     _ACTION_TYPE_NUM_ENTRIES
@@ -285,9 +286,9 @@ struct xkb_key_type {
     bool required;
     xkb_level_index_t num_levels;
     xkb_level_index_t num_level_names;
-    xkb_atom_t *level_names;
+    xkb_atom_t *level_names ATTR_COUNTED_BY(num_level_names);
     darray_size_t num_entries;
-    struct xkb_key_type_entry *entries;
+    struct xkb_key_type_entry *entries ATTR_COUNTED_BY(num_entries);
 };
 
 typedef uint16_t xkb_action_count_t;
@@ -456,7 +457,7 @@ struct xkb_key {
     xkb_layout_index_t out_of_range_group_number;
 
     xkb_layout_index_t num_groups;
-    struct xkb_group *groups;
+    struct xkb_group *groups ATTR_COUNTED_BY(num_groups);
 };
 
 struct xkb_mod {
@@ -568,7 +569,7 @@ struct xkb_keymap {
      *     Slow access via a binary search.
      */
     xkb_keycode_t num_keys_low;
-    struct xkb_key *keys;
+    struct xkb_key *keys ATTR_COUNTED_BY(num_keys);
 
     union {
         /**
@@ -644,7 +645,7 @@ struct xkb_keymap {
     xkb_layout_index_t num_groups;
     /* Not all groups must have names. */
     xkb_layout_index_t num_group_names;
-    xkb_atom_t *group_names;
+    xkb_atom_t *group_names ATTR_COUNTED_BY(num_group_names);
 
     struct xkb_led leds[XKB_MAX_LEDS];
     xkb_led_index_t num_leds;

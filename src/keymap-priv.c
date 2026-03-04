@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "xkbcommon/xkbcommon-names.h"
+#include "features/enums.h"
 #include "keymap.h"
 #include "messages-codes.h"
 
@@ -49,7 +50,7 @@ xkb_keymap_new(struct xkb_context *ctx, const char *func,
                enum xkb_keymap_compile_flags flags)
 {
     static const enum xkb_keymap_compile_flags XKB_KEYMAP_COMPILE_FLAGS =
-        XKB_KEYMAP_COMPILE_NO_FLAGS;
+        (enum xkb_keymap_compile_flags) XKB_KEYMAP_COMPILE_FLAGS_VALUES;
 
     if (flags & ~XKB_KEYMAP_COMPILE_FLAGS) {
         log_err(ctx, XKB_LOG_MESSAGE_NO_ID,
@@ -169,6 +170,7 @@ action_equal(const union xkb_action *a, const union xkb_action *b)
                 a->redirect.affect == b->redirect.affect &&
                 a->redirect.mods == b->redirect.mods);
     case ACTION_TYPE_UNSUPPORTED_LEGACY:
+    case ACTION_TYPE_UNKNOWN:
         return true;
     /* ACTION_TYPE_PRIVATE processed in the default case */
     case ACTION_TYPE_INTERNAL:
@@ -177,7 +179,7 @@ action_equal(const union xkb_action *a, const union xkb_action *b)
     default:
         {} /* Label followed by declaration requires C23 */
         /* Ensure to not miss `xkb_action_type` updates */
-        static_assert(ACTION_TYPE_INTERNAL == 19 &&
+        static_assert(ACTION_TYPE_INTERNAL == 20 &&
                       ACTION_TYPE_INTERNAL + 1 == _ACTION_TYPE_NUM_ENTRIES,
                       "Missing action type");
         /* Private/custom action */
