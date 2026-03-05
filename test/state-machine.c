@@ -96,11 +96,12 @@ update_controls(struct xkb_state_machine *sm,
                 struct xkb_event_iterator *events,
                 struct xkb_state *state,
                 bool use_machine,
-                enum xkb_keyboard_controls affect,
-                enum xkb_keyboard_controls controls)
+                enum xkb_keyboard_control_flags affect,
+                enum xkb_keyboard_control_flags controls)
 {
     if (use_machine) {
-        assert(xkb_state_machine_update_controls(sm, events, affect, controls)
+        assert(xkb_state_machine_update_enabled_controls(sm, events,
+                                                         affect, controls)
                == 0);
         const struct xkb_event *event;
         enum xkb_state_component changed = 0;
@@ -109,8 +110,133 @@ update_controls(struct xkb_state_machine *sm,
         }
         return changed;
     } else {
-        return xkb_state_update_controls(state, affect, controls);
+        return xkb_state_update_enabled_controls(state, affect, controls);
     }
+}
+
+static void
+test_group_wrap(struct xkb_context *ctx)
+{
+    static const char keymap_str[] =
+        "default xkb_keymap {\n"
+        "    xkb_keycodes { <> = 1; };\n"
+        "    xkb_types { type \"ONE_LEVEL\" { map[none] = 1; }; };\n"
+        "    xkb_symbols {\n"
+        "        key <> { [a], [b], [c], [d] };\n"
+        "    };\n"
+        "};";
+    struct xkb_keymap * const keymap = test_compile_buffer(
+        ctx, XKB_KEYMAP_FORMAT_TEXT_V1, keymap_str, sizeof(keymap_str)
+    );
+    assert(keymap);
+    const xkb_layout_index_t num_layouts = xkb_keymap_num_layouts(keymap);
+    assert(num_layouts == 4);
+
+    struct xkb_state_machine * const sm = xkb_state_machine_new(keymap, NULL);
+    assert(sm);
+    struct xkb_state * const state = xkb_state_new(keymap);
+    assert(state);
+
+    struct xkb_event_iterator * const events =
+        xkb_event_iterator_new(ctx, XKB_EVENT_ITERATOR_NO_FLAGS);
+    assert(events);
+
+    const struct xkb_event *event;
+
+    struct {
+        enum xkb_out_of_range_layout_policy policy;
+        xkb_layout_index_t redirect_group;
+        xkb_layout_index_t locked_group;
+        xkb_layout_index_t expected_group;
+    } tests[] = {
+        /*
+         * Default: wrap
+         */
+        {
+            .policy = 0,
+            .redirect_group = 0,
+            .locked_group = -1,
+            .expected_group = num_layouts - 1,
+        },
+        {
+            .policy = 0,
+            .redirect_group = 0,
+            .locked_group = num_layouts + 1,
+            .expected_group = 1,
+        },
+        /*
+         * Explicit: wrap
+         */
+        {
+            .policy = XKB_OUT_OF_RANGE_LAYOUT_WRAP,
+            .redirect_group = 0,
+            .locked_group = -1,
+            .expected_group = num_layouts - 1,
+        },
+        {
+            .policy = XKB_OUT_OF_RANGE_LAYOUT_WRAP,
+            .redirect_group = 0,
+            .locked_group = num_layouts + 1,
+            .expected_group = 1,
+        },
+        /*
+         * Explicit: saturate
+         */
+        {
+            .policy = XKB_OUT_OF_RANGE_LAYOUT_SATURATE,
+            .redirect_group = 0,
+            .locked_group = -1,
+            .expected_group = 0,
+        },
+        {
+            .policy = XKB_OUT_OF_RANGE_LAYOUT_SATURATE,
+            .redirect_group = 0,
+            .locked_group = num_layouts + 1,
+            .expected_group = num_layouts - 1,
+        },
+        /*
+         * Explicit: redirect
+         */
+        {
+            .policy = XKB_OUT_OF_RANGE_LAYOUT_REDIRECT,
+            .redirect_group = 2,
+            .locked_group = -1,
+            .expected_group = 2,
+        },
+        {
+            .policy = XKB_OUT_OF_RANGE_LAYOUT_REDIRECT,
+            .redirect_group = 2,
+            .locked_group = num_layouts + 1,
+            .expected_group = 2,
+        },
+    };
+
+    for (uint8_t t = 0; t < (uint8_t) ARRAY_SIZE(tests); t++) {
+        fprintf(stderr, "------\n*** %s: #%u ***\n", __func__, t);
+        if (tests[t].policy) {
+            assert(!xkb_state_machine_update_control(
+                sm, XKB_KEYBOARD_CONTROL_OUT_OF_RANGE_LAYOUT_POLICY,
+                tests[t].policy
+            ));
+        }
+        assert(!xkb_state_machine_update_control(
+            sm, XKB_KEYBOARD_CONTROL_OUT_OF_RANGE_LAYOUT_REDIRECT,
+            tests[t].redirect_group
+        ) ^ (tests[t].policy != XKB_OUT_OF_RANGE_LAYOUT_REDIRECT));
+        assert(!xkb_state_machine_update_latched_locked(
+            sm, events, 0, 0, false, 0, 0, 0, true, tests[t].locked_group
+        ));
+        while ((event = xkb_event_iterator_next(events)))
+            xkb_state_update_from_event(state, event);
+        assert_eq("unexpected effective group", tests[t].expected_group,
+                  xkb_state_serialize_layout(state, XKB_STATE_LAYOUT_EFFECTIVE),
+                  "%"PRIu32);
+    }
+
+    xkb_event_iterator_destroy(events);
+    xkb_state_unref(state);
+    xkb_state_machine_unref(sm);
+    xkb_keymap_unref(keymap);
 }
 
 static void
@@ -138,10 +264,10 @@ test_sticky_keys(struct xkb_context *ctx)
                                                          XKB_MOD_INDEX_CTRL);
 
     xkb_mod_mask_t mods = 0;
-    enum xkb_keyboard_controls controls;
+    enum xkb_keyboard_control_flags controls;
     enum xkb_state_component changed;
 
-    controls = xkb_state_serialize_controls(state, XKB_STATE_CONTROLS);
+    controls = xkb_state_serialize_enabled_controls(state, XKB_STATE_CONTROLS);
     assert(controls == 0);
 
     enum sticky_key_activation {
@@ -176,7 +302,7 @@ test_sticky_keys(struct xkb_context *ctx)
             changed = update_key(sm, events, state, use_events,
                                  KEY_F2 + EVDEV_OFFSET, XKB_KEY_DOWN);
             assert(changed == XKB_STATE_CONTROLS);
-            controls = xkb_state_serialize_controls(state, XKB_STATE_CONTROLS);
+            controls = xkb_state_serialize_enabled_controls(state, XKB_STATE_CONTROLS);
             assert(controls == XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS);
             changed = update_key(sm, events, state, use_events,
                                  KEY_F2 + EVDEV_OFFSET, XKB_KEY_UP);
@@ -187,20 +313,22 @@ test_sticky_keys(struct xkb_context *ctx)
                                       XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS,
                                       XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS);
             assert(changed == XKB_STATE_CONTROLS);
-            controls = xkb_state_serialize_controls(state, XKB_STATE_CONTROLS);
+            controls = xkb_state_serialize_enabled_controls(state, XKB_STATE_CONTROLS);
             assert(controls == XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS);
             break;
         }
         case STICKY_KEY_LEGACY_API:
-            changed = xkb_state_update_controls(state,
-                                                XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS,
-                                                XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS);
+            changed = xkb_state_update_enabled_controls(
+                state,
+                XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS,
+                XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS
+            );
             assert(changed == XKB_STATE_CONTROLS);
-            controls = xkb_state_serialize_controls(state, XKB_STATE_CONTROLS);
+            controls = xkb_state_serialize_enabled_controls(state, XKB_STATE_CONTROLS);
             assert(controls == XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS);
             break;
         }
-        controls = xkb_state_serialize_controls(state, XKB_STATE_CONTROLS);
+        controls = xkb_state_serialize_enabled_controls(state, XKB_STATE_CONTROLS);
         assert(controls == XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS);
 
         /* Latch shift (sticky) */
@@ -334,9 +462,9 @@ test_sticky_keys(struct xkb_context *ctx)
             break;
         }
         case STICKY_KEY_LEGACY_API:
-            changed = xkb_state_update_controls(state,
-                                                XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS,
-                                                0);
+            changed = xkb_state_update_enabled_controls(
+                state, XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS, 0
+            );
             assert(changed == (XKB_STATE_CONTROLS |
                                XKB_STATE_LAYOUT_LATCHED |
                                XKB_STATE_LAYOUT_LOCKED |
@@ -347,7 +475,7 @@ test_sticky_keys(struct xkb_context *ctx)
                                XKB_STATE_LEDS));
             break;
         }
-        controls = xkb_state_serialize_controls(state, XKB_STATE_CONTROLS);
+        controls = xkb_state_serialize_enabled_controls(state, XKB_STATE_CONTROLS);
         assert(controls == 0);
         mods = xkb_state_serialize_mods(state, XKB_STATE_MODS_EFFECTIVE);
         assert(mods == 0);
@@ -363,7 +491,7 @@ test_sticky_keys(struct xkb_context *ctx)
         mods = xkb_state_serialize_mods(state, XKB_STATE_MODS_EFFECTIVE);
         assert(mods == 0);
 
-        controls = xkb_state_serialize_controls(state, XKB_STATE_CONTROLS);
+        controls = xkb_state_serialize_enabled_controls(state, XKB_STATE_CONTROLS);
         assert(controls == 0);
     }
 
@@ -1414,18 +1542,18 @@ test_shortcuts_tweak(struct xkb_context *context)
     );
 
     /*
-     * xkb_state_machine_update_controls
+     * xkb_state_machine_update_enabled_controls
      */
 
-    const enum xkb_keyboard_controls controls =
+    const enum xkb_keyboard_control_flags controls =
         XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS;
 
     /* Disable already disabled sticky keys: no change */
-    assert(xkb_state_machine_update_controls(sm, events, controls, 0) == 0);
+    assert(xkb_state_machine_update_enabled_controls(sm, events, controls, 0) == 0);
     check_events_(events, { .type = XKB_EVENT_TYPE_NONE });
 
     /* Enable disabled sticky keys: no change */
-    assert(xkb_state_machine_update_controls(sm, events, controls, controls) == 0);
+    assert(xkb_state_machine_update_enabled_controls(sm, events, controls, controls) == 0);
     check_events_(
         events,
         {
@@ -1448,11 +1576,11 @@ test_shortcuts_tweak(struct xkb_context *context)
     );
 
     /* Enable already enabled sticky keys: no change */
-    assert(xkb_state_machine_update_controls(sm, events, controls, controls) == 0);
+    assert(xkb_state_machine_update_enabled_controls(sm, events, controls, controls) == 0);
     check_events_(events, { .type = XKB_EVENT_TYPE_NONE });
 
     /* Disable sticky keys: clear latches & locks */
-    assert(xkb_state_machine_update_controls(sm, events, controls, 0) == 0);
+    assert(xkb_state_machine_update_enabled_controls(sm, events, controls, 0) == 0);
     check_events_(
         events,
         {
@@ -1477,7 +1605,7 @@ test_shortcuts_tweak(struct xkb_context *context)
         }
     );
 
-    assert(xkb_state_machine_update_controls(sm, events, controls, 0) == 0);
+    assert(xkb_state_machine_update_enabled_controls(sm, events, controls, 0) == 0);
 
     /*
      * Check RedirectKey()
@@ -2614,6 +2742,7 @@ main(void)
 
     assert(!xkb_event_iterator_new(context, -1));
 
+    test_group_wrap(context);
     test_sticky_keys(context);
     test_redirect_key(context);
     test_modifiers_tweak(context);

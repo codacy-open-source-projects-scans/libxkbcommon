@@ -28,6 +28,7 @@
 #include <string.h>
 
 #include "xkbcommon/xkbcommon.h"
+#include "xkbcommon/xkbcommon-features.h"
 #include "darray.h"
 #include "keymap.h"
 #include "keysym.h"
@@ -62,6 +63,13 @@ struct xkb_state {
      * allows us to report which components of the state have changed.
      */
     struct state_components components;
+
+    struct state_machine_controls {
+        struct {
+            enum xkb_out_of_range_layout_policy policy;
+            xkb_layout_index_t redirect_group;
+        } out_of_range_group;
+    } controls;
 
     /*
      * At each event, we accumulate all the needed modifications to the base
@@ -139,7 +147,7 @@ state_key_get_layout(struct xkb_state *state, const struct xkb_key *key)
     static_assert(XKB_MAX_GROUPS < INT32_MAX, "Max groups don't fit");
     return XkbWrapGroupIntoRange((int32_t) state->components.group,
                                  key->num_groups,
-                                 key->out_of_range_group_action,
+                                 key->out_of_range_group_policy,
                                  key->out_of_range_group_number);
 }
 
@@ -1188,10 +1196,11 @@ xkb_state_init(struct xkb_state *state, struct xkb_keymap *keymap,
              /* Keymap v2+: enable extension to XKB if not manually disabled */
              state->flags |= XKB_STATE_A11Y_LATCH_SIMULTANEOUS_KEYS;
      }
+    state->controls.out_of_range_group.policy =
+        XKB_OUT_OF_RANGE_LAYOUT_WRAP;
 
     state->refcnt = 1;
     state->keymap = xkb_keymap_ref(keymap);
-    state->components.controls = keymap->enabled_ctrls;
     /* Ensure that derived state is correctly initialized */
     xkb_state_update_derived(state);
 }
@@ -1326,12 +1335,11 @@ xkb_state_update_derived(struct xkb_state *state)
                               state->components.latched_mods |
                               state->components.locked_mods);
 
-    /* TODO: Use groups_wrap control instead of always RANGE_WRAP. */
-
     /* Lock group must be adjusted, but not base nor latched groups */
     wrapped = XkbWrapGroupIntoRange(state->components.locked_group,
                                     state->keymap->num_groups,
-                                    RANGE_WRAP, 0);
+                                    state->controls.out_of_range_group.policy,
+                                    state->controls.out_of_range_group.redirect_group);
     static_assert(XKB_MAX_GROUPS < INT32_MAX, "Max groups don't fit");
     state->components.locked_group =
         (int32_t) (wrapped == XKB_LAYOUT_INVALID ? 0 : wrapped);
@@ -1341,7 +1349,8 @@ xkb_state_update_derived(struct xkb_state *state)
                                     state->components.latched_group +
                                     state->components.locked_group,
                                     state->keymap->num_groups,
-                                    RANGE_WRAP, 0);
+                                    state->controls.out_of_range_group.policy,
+                                    state->controls.out_of_range_group.redirect_group);
     state->components.group =
         (wrapped == XKB_LAYOUT_INVALID ? 0 : wrapped);
 
@@ -1601,10 +1610,10 @@ clear_all_latches_and_locks(struct xkb_state *state,
 }
 
 static void
-state_update_controls(struct xkb_state *state,
-                      struct xkb_event_iterator *events,
-                      enum xkb_keyboard_controls affect,
-                      enum xkb_keyboard_controls controls)
+state_update_enabled_controls(struct xkb_state *state,
+                              struct xkb_event_iterator *events,
+                              enum xkb_keyboard_control_flags affect,
+                              enum xkb_keyboard_control_flags controls)
 {
     const bool had_sticky_keys = state->components.controls & CONTROL_STICKY_KEYS;
 
@@ -1612,7 +1621,7 @@ state_update_controls(struct xkb_state *state,
      * Enable to use the public API with the all the Control values, except
      * the internal ones, if any.
      */
-    affect = (enum xkb_action_controls) affect & CONTROL_ALL;
+    affect = (enum xkb_action_controls) affect & CONTROL_ALL_BOOLEAN;
     state->components.controls &= ~affect;
     state->components.controls |= (enum xkb_action_controls) controls & affect;
 
@@ -1625,12 +1634,12 @@ state_update_controls(struct xkb_state *state,
 }
 
 enum xkb_state_component
-xkb_state_update_controls(struct xkb_state *state,
-                          enum xkb_keyboard_controls affect,
-                          enum xkb_keyboard_controls controls)
+xkb_state_update_enabled_controls(struct xkb_state *state,
+                                  enum xkb_keyboard_control_flags affect,
+                                  enum xkb_keyboard_control_flags controls)
 {
     const struct state_components previous = state->components;
-    state_update_controls(state, NULL, affect, controls);
+    state_update_enabled_controls(state, NULL, affect, controls);
     return get_state_component_changes(&previous, &state->components);
 }
 
@@ -1992,7 +2001,7 @@ xkb_state_serialize_layout(struct xkb_state *state,
     return serialize_layout(&state->components, type);
 }
 
-static inline enum xkb_keyboard_controls
+static inline enum xkb_keyboard_control_flags
 serialize_controls(const struct state_components *components,
                    enum xkb_state_component type)
 {
@@ -2001,13 +2010,14 @@ serialize_controls(const struct state_components *components,
          * Enable to use the public API with the all the Controls values, except
          * the internal ones, if any.
          */
-        ? (enum xkb_keyboard_controls) (components->controls & CONTROL_ALL)
+        ? (enum xkb_keyboard_control_flags) (components->controls &
+                                        CONTROL_ALL_BOOLEAN)
         : 0;
 }
 
-enum xkb_keyboard_controls
-xkb_state_serialize_controls(const struct xkb_state *state,
-                             enum xkb_state_component type)
+enum xkb_keyboard_control_flags
+xkb_state_serialize_enabled_controls(const struct xkb_state *state,
+                                     enum xkb_state_component type)
 {
     return serialize_controls(&state->components, type);
 }
@@ -2399,31 +2409,30 @@ struct xkb_state_machine {
     /** Internal state */
     struct xkb_state state;
 
-    /** Extra event API-specific state data */
-    struct state_machine_data {
-        /** Configuration */
-        struct state_machine_config {
-            /** Modifiers remapping */
-            struct state_machine_modifiers_config {
-                /** Real modifier mask */
-                xkb_mod_mask_t mask;
-                /** Modifiers re-mappings */
-                darray_size_t mappings_num;
-                struct state_machine_mods_mapping {
-                    xkb_mod_mask_t source;
-                    xkb_mod_mask_t target;
-                } * mappings ATTR_COUNTED_BY(mappings_num);
-            } modifiers;
+    /* Extra event API-specific state data */
 
-            /** Shortcuts tweak */
-            struct state_machine_shortcuts_config {
-                /** Real modifier mask to trigger shortcuts tweaks */
-                xkb_mod_mask_t mask;
-                /** Layouts targets */
-                xkb_layout_index_t *targets;
-            } shortcuts;
-        } config;
-    } extra;
+    /** Configuration */
+    struct state_machine_config {
+        /** Modifiers remapping */
+        struct state_machine_modifiers_config {
+            /** Real modifier mask */
+            xkb_mod_mask_t mask;
+            /** Modifiers re-mappings */
+            darray_size_t mappings_num;
+            struct state_machine_mods_mapping {
+                xkb_mod_mask_t source;
+                xkb_mod_mask_t target;
+            } * mappings ATTR_COUNTED_BY(mappings_num);
+        } modifiers;
+
+        /** Shortcuts tweak */
+        struct state_machine_shortcuts_config {
+            /** Real modifier mask to trigger shortcuts tweaks */
+            xkb_mod_mask_t mask;
+            /** Layouts targets */
+            xkb_layout_index_t *targets;
+        } shortcuts;
+    } config;
 };
 
 typedef darray(struct state_machine_mods_mapping) state_machine_mods_mappings;
@@ -2659,12 +2668,12 @@ state_machine_set_mods(struct xkb_state_machine *sm,
 
         darray_steal(
             mappings,
-            &sm->extra.config.modifiers.mappings,
-            &sm->extra.config.modifiers.mappings_num
+            &sm->config.modifiers.mappings,
+            &sm->config.modifiers.mappings_num
         );
-        sm->extra.config.modifiers.mask = mask;
+        sm->config.modifiers.mask = mask;
     } else {
-        sm->extra.config.modifiers = (struct state_machine_modifiers_config) {
+        sm->config.modifiers = (struct state_machine_modifiers_config) {
             .mappings = NULL,
             .mappings_num = 0,
             .mask = 0
@@ -2679,7 +2688,7 @@ state_machine_set_shortcuts(struct xkb_state_machine *sm,
                             const struct xkb_shortcuts_config_options *options)
 {
     if (darray_empty(options->targets)) {
-        sm->extra.config.shortcuts = (struct state_machine_shortcuts_config) {
+        sm->config.shortcuts = (struct state_machine_shortcuts_config) {
             .mask = 0,
             .targets = NULL
         };
@@ -2731,7 +2740,7 @@ state_machine_set_shortcuts(struct xkb_state_machine *sm,
         targets[l] = XKB_LAYOUT_INVALID;
     }
 
-    sm->extra.config.shortcuts = (struct state_machine_shortcuts_config) {
+    sm->config.shortcuts = (struct state_machine_shortcuts_config) {
         .mask = mask,
         .targets = targets
     };
@@ -2779,8 +2788,8 @@ xkb_state_machine_unref(struct xkb_state_machine *sm)
         return;
 
     xkb_state_destroy(&sm->state);
-    free(sm->extra.config.shortcuts.targets);
-    free(sm->extra.config.modifiers.mappings);
+    free(sm->config.shortcuts.targets);
+    free(sm->config.modifiers.mappings);
     free(sm);
 }
 
@@ -2799,10 +2808,10 @@ xkb_state_machine_get_state(struct xkb_state_machine *sm)
 }
 
 int
-xkb_state_machine_update_controls(struct xkb_state_machine *sm,
-                                  struct xkb_event_iterator *events,
-                                  enum xkb_keyboard_controls affect,
-                                  enum xkb_keyboard_controls controls)
+xkb_state_machine_update_enabled_controls(struct xkb_state_machine *sm,
+                                          struct xkb_event_iterator *events,
+                                          enum xkb_keyboard_control_flags affect,
+                                          enum xkb_keyboard_control_flags controls)
 {
     darray_size(events->queue) = 0;
     events->next = 0;
@@ -2810,7 +2819,7 @@ xkb_state_machine_update_controls(struct xkb_state_machine *sm,
     struct xkb_state * restrict const state = &sm->state;
     const struct state_components previous_components = state->components;
 
-    state_update_controls(state, events, affect, controls);
+    state_update_enabled_controls(state, events, affect, controls);
 
     const enum xkb_state_component changed =
         get_state_component_changes(&previous_components, &state->components);
@@ -2826,6 +2835,35 @@ xkb_state_machine_update_controls(struct xkb_state_machine *sm,
     }
 
     return 0;
+}
+
+int
+xkb_state_machine_update_control(struct xkb_state_machine *sm,
+                                 enum xkb_keyboard_control_param control,
+                                 uint32_t value)
+{
+    switch (control) {
+    case XKB_KEYBOARD_CONTROL_OUT_OF_RANGE_LAYOUT_POLICY:
+        if (!xkb_has_feature(XKB_FEATURE_ENUM_OUT_OF_RANGE_LAYOUT_POLICY,
+                             (int)value))
+            break;
+        sm->state.controls.out_of_range_group.policy =
+            (enum xkb_out_of_range_layout_policy)value;
+        return 0;
+    case XKB_KEYBOARD_CONTROL_OUT_OF_RANGE_LAYOUT_REDIRECT:
+        if (sm->state.controls.out_of_range_group.policy !=
+            XKB_OUT_OF_RANGE_LAYOUT_REDIRECT ||
+            value >= sm->state.keymap->num_groups)
+            break;
+        sm->state.controls.out_of_range_group.redirect_group = value;
+        return 0;
+    default:
+        ;
+    }
+    log_warn_func(sm->state.keymap->ctx, XKB_LOG_MESSAGE_NO_ID,
+                  "Unsupported control parameter %d with value 0x%"PRIx32"\n",
+                  control, value);
+    return -1;
 }
 
 int
@@ -3040,10 +3078,10 @@ xkb_state_machine_update_key(struct xkb_state_machine *sm,
 
     const struct state_components previous_components = state->components;
 
-    ssize_t remap_event = do_remap_modifiers(&sm->extra.config.modifiers, state,
+    ssize_t remap_event = do_remap_modifiers(&sm->config.modifiers, state,
                                              events, key);
 
-    remap_event = do_shortcuts_tweak(&sm->extra.config.shortcuts, state,
+    remap_event = do_shortcuts_tweak(&sm->config.shortcuts, state,
                                      &previous_components, events, remap_event);
 
     state->set_mods = 0;
@@ -3200,9 +3238,9 @@ xkb_event_get_changed_components(const struct xkb_event *event)
         : 0;
 }
 
-enum xkb_keyboard_controls
-xkb_event_serialize_controls(const struct xkb_event *event,
-                             enum xkb_state_component components)
+enum xkb_keyboard_control_flags
+xkb_event_serialize_enabled_controls(const struct xkb_event *event,
+                                     enum xkb_state_component components)
 {
     return (event->type == XKB_EVENT_TYPE_COMPONENTS_CHANGE)
         ? serialize_controls(&event->components.components, components)

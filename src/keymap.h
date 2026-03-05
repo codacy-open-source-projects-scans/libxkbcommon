@@ -130,12 +130,13 @@ enum xkb_action_flags {
 };
 
 /**
- * This is the general version of the *public* `xkb_keyboard_controls` enum.
+ * This is the general version of the *public* `xkb_keyboard_control_flags` enum.
  * We do not expose the following enum, as it does not make sense to expose
  * controls whose effects we do not support.
  * However, we should enforce both enum to share the same values.
  */
 enum xkb_action_controls {
+    /* X11 encoding */
     CONTROL_REPEAT = (1 << 0),
     CONTROL_SLOW = (1 << 1),
     CONTROL_DEBOUNCE = (1 << 2),
@@ -146,12 +147,22 @@ enum xkb_action_controls {
     CONTROL_AX_TIMEOUT = (1 << 7),
     CONTROL_AX_FEEDBACK = (1 << 8),
     CONTROL_BELL = (1 << 9),
-    CONTROL_IGNORE_GROUP_LOCK = (1 << 10),
+    CONTROL_IGNORE_GROUP_LOCK = (1 << 12),
+
+    /* Non-X11 encoding */
+    CONTROL_GROUPS_WRAP = (1 << 13),
+
     /**
      * All the XKB Controls. If we ever introduce *internal* controls, this mask
      * should not include them.
      */
     CONTROL_ALL = \
+        (CONTROL_REPEAT | CONTROL_SLOW | CONTROL_DEBOUNCE | \
+         CONTROL_STICKY_KEYS | CONTROL_MOUSE_KEYS | CONTROL_MOUSE_KEYS_ACCEL | \
+         CONTROL_AX | CONTROL_AX_TIMEOUT | CONTROL_AX_FEEDBACK | \
+         CONTROL_BELL | CONTROL_IGNORE_GROUP_LOCK | CONTROL_GROUPS_WRAP),
+    /* All the boolean controls */
+    CONTROL_ALL_BOOLEAN = \
         (CONTROL_REPEAT | CONTROL_SLOW | CONTROL_DEBOUNCE | \
          CONTROL_STICKY_KEYS | CONTROL_MOUSE_KEYS | CONTROL_MOUSE_KEYS_ACCEL | \
          CONTROL_AX | CONTROL_AX_TIMEOUT | CONTROL_AX_FEEDBACK | \
@@ -348,13 +359,6 @@ struct xkb_controls {
     unsigned int axt_ctrls_values;
 };
 
-/* Such an awkward name.  Oh well. */
-enum xkb_range_exceed_type {
-    RANGE_WRAP = 0,
-    RANGE_SATURATE,
-    RANGE_REDIRECT,
-};
-
 enum xkb_explicit_components {
     EXPLICIT_SYMBOLS = (1 << 0),
     EXPLICIT_INTERP = (1 << 1),
@@ -453,7 +457,7 @@ struct xkb_key {
     bool implicit_actions:1;
 
     bool out_of_range_pending_group:1;
-    enum xkb_range_exceed_type out_of_range_group_action;
+    enum xkb_out_of_range_layout_policy out_of_range_group_policy;
     xkb_layout_index_t out_of_range_group_number;
 
     xkb_layout_index_t num_groups;
@@ -552,8 +556,6 @@ struct xkb_keymap {
     int refcnt;
     enum xkb_keymap_compile_flags flags;
     enum xkb_keymap_format format;
-
-    enum xkb_action_controls enabled_ctrls;
 
     xkb_keycode_t min_key_code;
     xkb_keycode_t max_key_code;
@@ -806,7 +808,7 @@ XkbLevelsSameActions(const struct xkb_level *a, const struct xkb_level *b);
 xkb_layout_index_t
 XkbWrapGroupIntoRange(int32_t group,
                       xkb_layout_index_t num_groups,
-                      enum xkb_range_exceed_type out_of_range_group_action,
+                      enum xkb_out_of_range_layout_policy out_of_range_group_policy,
                       xkb_layout_index_t out_of_range_group_number);
 
 XKB_EXPORT_PRIVATE xkb_mod_mask_t

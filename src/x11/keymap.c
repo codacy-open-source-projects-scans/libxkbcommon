@@ -483,11 +483,11 @@ get_sym_maps(struct xkb_keymap *keymap, xcb_connection_t *conn,
         FAIL_UNLESS(key->out_of_range_group_number <= key->num_groups);
 
         if (wire_sym_map->groupInfo & XCB_XKB_GROUPS_WRAP_CLAMP_INTO_RANGE)
-            key->out_of_range_group_action = RANGE_SATURATE;
+            key->out_of_range_group_policy = XKB_OUT_OF_RANGE_LAYOUT_SATURATE;
         else if (wire_sym_map->groupInfo & XCB_XKB_GROUPS_WRAP_REDIRECT_INTO_RANGE)
-            key->out_of_range_group_action = RANGE_REDIRECT;
+            key->out_of_range_group_policy = XKB_OUT_OF_RANGE_LAYOUT_REDIRECT;
         else
-            key->out_of_range_group_action = RANGE_WRAP;
+            key->out_of_range_group_policy = XKB_OUT_OF_RANGE_LAYOUT_WRAP;
 
         {
             int syms_length = xcb_xkb_key_sym_map_syms_length(wire_sym_map);
@@ -1220,7 +1220,6 @@ get_controls(struct xkb_keymap *keymap, xcb_connection_t *conn,
     FAIL_IF_BAD_REPLY(reply, "XkbGetControls");
     FAIL_UNLESS(reply->numGroups > 0 && reply->numGroups <= 4);
 
-    keymap->enabled_ctrls = translate_controls_mask(reply->enabledControls);
     keymap->num_groups = reply->numGroups;
 
     FAIL_UNLESS(keymap->max_key_code < XCB_XKB_CONST_PER_KEY_BIT_ARRAY_SIZE * 8);
