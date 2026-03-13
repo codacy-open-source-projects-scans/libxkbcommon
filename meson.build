@@ -223,15 +223,18 @@ endif
 # Test if counted_by attribute is available, and supported on pointer fields
 # (not just flexible array fields).
 if cc.compiles('''
-    struct test {
-        int count;
-        int *items __attribute__((counted_by(count)));
-    };
-    int main(void) {
-        struct test t = {0};
-        return 0;
-    }
-''', name: 'counted_by attribute for pointers')
+        struct test {
+            int count;
+            int *items __attribute__((counted_by(count)));
+        };
+        int main(void) {
+            struct test t = {0};
+            return 0;
+        }
+        ''',
+        args: cc.get_supported_arguments('-Werror=attributes'),
+        name: 'counted_by attribute for pointers'
+    )
     configh_data.set('HAVE_ATTR_COUNTED_BY', 1)
 endif
 if cc.has_header_symbol('unistd.h', 'eaccess', prefix: system_ext_define)
@@ -1520,6 +1523,7 @@ You can disable the documentation with -Denable-docs=false.''')
         'doc/diagrams/xkb-configuration.dot',
         'doc/diagrams/xkb-keymap-components.dot',
         'doc/diagrams/xkb-types-explanation.dot',
+        'doc/img/numeric-keypad-overlay.svg',
         'doc/doxygen-extra.css',
         'doc/faq.md',
         'doc/introduction-to-xkb.md',
