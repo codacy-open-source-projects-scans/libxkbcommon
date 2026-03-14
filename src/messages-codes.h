@@ -118,6 +118,8 @@ enum xkb_message_code {
     XKB_ERROR_INCLUDED_FILE_NOT_FOUND = 338,
     /** Use of an operator that is unknown and thus unsupported */
     XKB_ERROR_UNKNOWN_OPERATOR = 345,
+    /** Overlapping overlays are not supported */
+    XKB_ERROR_OVERLAPPING_OVERLAY = 355,
     /** Use of a legacy X11 action that is not supported */
     XKB_WARNING_UNSUPPORTED_LEGACY_ACTION = 362,
     /** An entry is duplicated and will be ignored */
@@ -148,6 +150,8 @@ enum xkb_message_code {
     XKB_ERROR_INVALID_ACTION_FIELD = 563,
     /** Warn when a field has not the expected type */
     XKB_ERROR_WRONG_FIELD_TYPE = 578,
+    /** Overlay index is not in the supported range */
+    XKB_ERROR_UNSUPPORTED_OVERLAY_INDEX = 588,
     /** Cannot resolve a given (Rules, Model, Layout, Variant, Options) configuration */
     XKB_ERROR_CANNOT_RESOLVE_RMLVO = 595,
     /** Invalid Unicode escape sequence */
@@ -200,7 +204,7 @@ enum xkb_message_code {
     XKB_ERROR_CONFLICTING_KEY_SYMBOLS_ENTRY = 901,
     /** Missing group index in a group name entry */
     XKB_WARNING_MISSING_SYMBOLS_GROUP_NAME_INDEX = 903,
-    /** Warn if there are conflicting fields while merging keys */
+    /** Warn if there are conflicting fields in the key definition or while merging keys */
     XKB_WARNING_CONFLICTING_KEY_FIELDS = 935,
     /** An identifier is used but is not built-in */
     XKB_ERROR_INVALID_IDENTIFIER = 949,

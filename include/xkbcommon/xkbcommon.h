@@ -720,11 +720,33 @@ XKB_EXPORT xkb_keysym_t
 xkb_keysym_from_name(const char *name, enum xkb_keysym_flags flags);
 
 /**
+ * Get the keysym corresponding to a *single* Unicode/UTF-8 encoded codepoint.
+ *
+ * @param buffer A buffer to read the UTF-8 encoded codepoint from.
+ * @param size   The size of @p buffer.
+ * @returns The keysym corresponding to the specified Unicode
+ * codepoint, or `XKB_KEY_NoSymbol` if there is none.
+ *
+ * This function is the inverse of @ref xkb_keysym_to_utf8(). In cases
+ * where a single codepoint corresponds to multiple keysyms, returns
+ * the keysym with the lowest value.
+ *
+ * Unicode codepoints which do not have a special (legacy) keysym
+ * encoding use a direct encoding scheme. These keysyms don’t usually
+ * have an associated keysym constant (`XKB_KEY_*`).
+ *
+ * @sa `xkb_keysym_to_utf8()`
+ * @since 1.14.0
+ */
+XKB_EXPORT xkb_keysym_t
+xkb_utf8_to_keysym(const char *buffer, size_t size);
+
+/**
  * Get the Unicode/UTF-8 representation of a keysym.
  *
  * @param[in]  keysym The keysym.
  * @param[out] buffer A buffer to write the UTF-8 string into.
- * @param[in]  size   The size of buffer.  Must be at least 5.
+ * @param[in]  size   The size of @p buffer.  Must be at least 5.
  *
  * @returns The number of bytes written to the buffer (including the
  * terminating byte).  If the keysym does not have a Unicode
@@ -757,9 +779,9 @@ xkb_keysym_to_utf32(xkb_keysym_t keysym);
  * Get the keysym corresponding to a Unicode/UTF-32 codepoint.
  *
  * @returns The keysym corresponding to the specified Unicode
- * codepoint, or XKB_KEY_NoSymbol if there is none.
+ * codepoint, or `XKB_KEY_NoSymbol` if there is none.
  *
- * This function is the inverse of @ref xkb_keysym_to_utf32. In cases
+ * This function is the inverse of @ref xkb_keysym_to_utf32(). In cases
  * where a single codepoint corresponds to multiple keysyms, returns
  * the keysym with the lowest value.
  *
@@ -2492,6 +2514,54 @@ enum xkb_keyboard_control_flags {
      * [latch]: @ref latched-mod-def
      */
     XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS = (1 << 3),
+    /**
+     * Enable the [keyboard overlay](@ref key-behavior-overlay) **1**.
+     *
+     * @since 1.14.0
+     */
+    XKB_KEYBOARD_CONTROL_OVERLAY1 = (1 << 10),
+    /**
+     * Enable the [keyboard overlay](@ref key-behavior-overlay) **2**.
+     *
+     * @since 1.14.0
+     */
+    XKB_KEYBOARD_CONTROL_OVERLAY2 = (1 << 11),
+    /**
+     * Enable the [keyboard overlay](@ref key-behavior-overlay) **3**.
+     *
+     * @since 1.14.0
+     */
+    XKB_KEYBOARD_CONTROL_OVERLAY3 = (1 << 13),
+    /**
+     * Enable the [keyboard overlay](@ref key-behavior-overlay) **4**.
+     *
+     * @since 1.14.0
+     */
+    XKB_KEYBOARD_CONTROL_OVERLAY4 = (1 << 14),
+    /**
+     * Enable the [keyboard overlay](@ref key-behavior-overlay) **5**.
+     *
+     * @since 1.14.0
+     */
+    XKB_KEYBOARD_CONTROL_OVERLAY5 = (1 << 15),
+    /**
+     * Enable the [keyboard overlay](@ref key-behavior-overlay) **6**.
+     *
+     * @since 1.14.0
+     */
+    XKB_KEYBOARD_CONTROL_OVERLAY6 = (1 << 16),
+    /**
+     * Enable the [keyboard overlay](@ref key-behavior-overlay) **7**.
+     *
+     * @since 1.14.0
+     */
+    XKB_KEYBOARD_CONTROL_OVERLAY7 = (1 << 17),
+    /**
+     * Enable the [keyboard overlay](@ref key-behavior-overlay) **8**.
+     *
+     * @since 1.14.0
+     */
+    XKB_KEYBOARD_CONTROL_OVERLAY8 = (1 << 18),
 };
 
 /**

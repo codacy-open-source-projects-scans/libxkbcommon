@@ -471,13 +471,13 @@ main(void)
         xkb_keysym_get_explicit_names(XKB_KEY_ISO_Group_Shift,
                                       aliases, ARRAY_SIZE(aliases));
     assert(aliases_count == XKB_KEYSYM_EXPLICIT_ALIASES_MAX);
-    assert_streq_not_null("", "Mode_switch", aliases[0]);
+    assert_streq_not_null("", "ISO_Group_Shift", aliases[0]);
     assert_streq_not_null("", "Arabic_switch", aliases[1]);
     assert_streq_not_null("", "Greek_switch", aliases[2]);
     assert_streq_not_null("", "Hangul_switch", aliases[3]);
     assert_streq_not_null("", "Hebrew_switch", aliases[4]);
-    assert_streq_not_null("", "ISO_Group_Shift", aliases[5]);
-    assert_streq_not_null("", "kana_switch", aliases[6]);
+    assert_streq_not_null("", "kana_switch", aliases[5]);
+    assert_streq_not_null("", "Mode_switch", aliases[6]);
     assert_streq_not_null("", "script_switch", aliases[7]);
     assert_streq_not_null("", "SunAltGraph", aliases[8]);
 
@@ -525,6 +525,18 @@ main(void)
         char utf8[7];
         int needed = xkb_keysym_to_utf8(ks, utf8, sizeof(utf8));
         assert(0 <= needed && needed <= XKB_KEYSYM_UTF8_MAX_SIZE);
+        if (needed) {
+            /* UTF-8 Roundtrip */
+            const xkb_keysym_t ks_from_utf8 =
+                xkb_utf8_to_keysym(utf8, (size_t)needed - 1);
+            if (ks_from_utf8 != ks) {
+                /* Non canonical mapping */
+                const uint32_t expected = xkb_keysym_to_utf32(ks);
+                const uint32_t got = xkb_keysym_to_utf32(ks_from_utf8);
+                assert_eq("UTF-8 roundtrip for 0x%04"PRIx32,
+                        expected, got, "0x%04"PRIx32, ks);
+            }
+        }
         /* Check maximum name length (`needed` does not include the ending NULL) */
         char name[XKB_KEYSYM_NAME_MAX_SIZE];
         needed = xkb_keysym_iterator_get_name(iter, name, sizeof(name));
@@ -710,7 +722,8 @@ main(void)
     assert(test_keysym(XKB_KEY_LONGEST_CANONICAL_NAME, LONGEST_CANONICAL_NAME));
     /* Canonical names */
     assert(test_keysym(XKB_KEY_Henkan, "Henkan_Mode"));
-    assert(test_keysym(XKB_KEY_ISO_Group_Shift, "Mode_switch"));
+    assert(test_keysym(XKB_KEY_Mode_switch, "ISO_Group_Shift"));
+    assert(test_keysym(XKB_KEY_ISO_Group_Shift, "ISO_Group_Shift"));
     assert(test_keysym(XKB_KEY_dead_perispomeni, "dead_tilde"));
     assert(test_keysym(XKB_KEY_guillemetleft, "guillemotleft"));
     assert(test_keysym(XKB_KEY_ordmasculine, "masculine"));
@@ -780,15 +793,15 @@ main(void)
     assert(test_deprecated(XKB_KEY_downcaret, NULL, true, NULL));
     assert(test_deprecated(XKB_KEY_downcaret, "downcaret", true, NULL));
     /* Mixed deprecated and not deprecated aliases */
-    assert(test_deprecated(XKB_KEY_Mode_switch, NULL, false, "Mode_switch"));
-    assert(test_deprecated(XKB_KEY_Mode_switch, "Mode_switch", false, "Mode_switch"));
-    assert(test_deprecated(XKB_KEY_Mode_switch, garbage_name, false, "Mode_switch"));
-    assert(test_deprecated(XKB_KEY_ISO_Group_Shift, NULL, false, "Mode_switch"));
-    assert(test_deprecated(XKB_KEY_ISO_Group_Shift, "ISO_Group_Shift", false, "Mode_switch"));
-    assert(test_deprecated(XKB_KEY_ISO_Group_Shift, garbage_name, false, "Mode_switch"));
-    assert(test_deprecated(XKB_KEY_SunAltGraph, NULL, false, "Mode_switch"));
-    assert(test_deprecated(XKB_KEY_SunAltGraph, "SunAltGraph", true, "Mode_switch"));
-    assert(test_deprecated(XKB_KEY_SunAltGraph, garbage_name, false, "Mode_switch"));
+    assert(test_deprecated(XKB_KEY_Mode_switch, NULL, false, "ISO_Group_Shift"));
+    assert(test_deprecated(XKB_KEY_Mode_switch, "Mode_switch", false, "ISO_Group_Shift"));
+    assert(test_deprecated(XKB_KEY_Mode_switch, garbage_name, false, "ISO_Group_Shift"));
+    assert(test_deprecated(XKB_KEY_ISO_Group_Shift, NULL, false, "ISO_Group_Shift"));
+    assert(test_deprecated(XKB_KEY_ISO_Group_Shift, "ISO_Group_Shift", false, "ISO_Group_Shift"));
+    assert(test_deprecated(XKB_KEY_ISO_Group_Shift, garbage_name, false, "ISO_Group_Shift"));
+    assert(test_deprecated(XKB_KEY_SunAltGraph, NULL, false, "ISO_Group_Shift"));
+    assert(test_deprecated(XKB_KEY_SunAltGraph, "SunAltGraph", true, "ISO_Group_Shift"));
+    assert(test_deprecated(XKB_KEY_SunAltGraph, garbage_name, false, "ISO_Group_Shift"));
     assert(test_deprecated(XKB_KEY_notapproxeq, "notapproxeq", true, NULL));
     assert(test_deprecated(XKB_KEY_approxeq, "approxeq", true, NULL));
     /* Unicode is never deprecated */
@@ -827,6 +840,11 @@ main(void)
 
     assert(test_string("", XKB_KEY_NoSymbol));
     assert(test_casestring("", XKB_KEY_NoSymbol));
+
+    assert(xkb_utf8_to_keysym(NULL, 0) == XKB_KEY_NoSymbol);
+    assert(xkb_utf8_to_keysym("", 1) == XKB_KEY_NoSymbol);
+    assert(xkb_utf8_to_keysym("1", 2) == XKB_KEY_1);
+    assert(xkb_utf8_to_keysym("12", 2) == XKB_KEY_1); /* Only first codepoint */
 
     /* Latin-1 keysyms (1:1 mapping in UTF-32) */
     assert(test_utf8(0x0020, "\x20"));
@@ -1024,17 +1042,14 @@ main(void)
      * •       SS: upper case (special mapping, not handled by us)
      * • U+1E9E ẞ: upper case, only for capitals
      */
-#ifndef XKB_KEY_Ssharp
-#define XKB_KEY_Ssharp (XKB_KEYSYM_UNICODE_OFFSET + 0x1E9E)
-#endif
     assert(!xkb_keysym_is_upper_or_title(XKB_KEY_ssharp));
-    assert(xkb_keysym_is_upper_or_title(XKB_KEY_Ssharp));
+    assert(xkb_keysym_is_upper_or_title(XKB_KEY_SSHARP));
     assert(xkb_keysym_is_lower(XKB_KEY_ssharp));
-    assert(!xkb_keysym_is_lower(XKB_KEY_Ssharp));
-    assert(xkb_keysym_to_upper(XKB_KEY_ssharp) == XKB_KEY_Ssharp);
+    assert(!xkb_keysym_is_lower(XKB_KEY_SSHARP));
+    assert(xkb_keysym_to_upper(XKB_KEY_ssharp) == XKB_KEY_SSHARP);
     assert(xkb_keysym_to_lower(XKB_KEY_ssharp) == XKB_KEY_ssharp);
-    assert(xkb_keysym_to_upper(XKB_KEY_Ssharp) == XKB_KEY_Ssharp);
-    assert(xkb_keysym_to_lower(XKB_KEY_Ssharp) == XKB_KEY_ssharp);
+    assert(xkb_keysym_to_upper(XKB_KEY_SSHARP) == XKB_KEY_SSHARP);
+    assert(xkb_keysym_to_lower(XKB_KEY_SSHARP) == XKB_KEY_ssharp);
 
     /* Title case: simple mappings
      * • U+01F1 Ǳ: upper case

@@ -612,7 +612,6 @@ write_types(struct xkb_keymap *keymap, enum xkb_keymap_format format,
                 copy_to_buf(buf, ";\n");
             }
 
-
         copy_to_buf(buf, "\t};\n");
     }
 
@@ -621,8 +620,8 @@ write_types(struct xkb_keymap *keymap, enum xkb_keymap_format format,
 }
 
 static bool
-write_led_map(struct xkb_keymap *keymap, bool explicit, struct buf *buf,
-              const struct xkb_led *led)
+write_led_map(struct xkb_keymap *keymap, enum xkb_keymap_format format,
+              bool explicit, struct buf *buf, const struct xkb_led *led)
 {
     copy_to_buf(buf, "\tindicator ");
     write_buf_string_literal(buf, xkb_atom_text(keymap->ctx, led->name));
@@ -651,7 +650,7 @@ write_led_map(struct xkb_keymap *keymap, bool explicit, struct buf *buf,
 
     if (led->ctrls) {
         write_buf(buf, "\t\tcontrols= %s;\n",
-                  ControlMaskText(keymap->ctx, led->ctrls));
+                  ControlMaskText(keymap->ctx, format, led->ctrls));
     }
 
     copy_to_buf(buf, "\t};\n");
@@ -802,8 +801,10 @@ write_action(struct xkb_keymap *keymap, enum xkb_keymap_format format,
     case ACTION_TYPE_CTRL_SET:
     case ACTION_TYPE_CTRL_LOCK:
         write_buf(buf, "%s%s(controls=%s%s)%s", prefix, type,
-                  ControlMaskText(keymap->ctx, action->ctrls.ctrls),
-                  (action->type == ACTION_TYPE_CTRL_LOCK) ? affect_lock_text(action->ctrls.flags, false) : "",
+                  ControlMaskText(keymap->ctx, format, action->ctrls.ctrls),
+                  (action->type == ACTION_TYPE_CTRL_LOCK
+                    ? affect_lock_text(action->ctrls.flags, false)
+                    : ""),
                   suffix);
         break;
 
@@ -1219,7 +1220,7 @@ write_compat(struct xkb_keymap * restrict keymap,
     xkb_leds_foreach(led, keymap)
         if (led->which_groups || led->groups || led->which_mods ||
             led->mods.mods || led->ctrls)
-            if (!write_led_map(keymap, explicit, buf, led))
+            if (!write_led_map(keymap, format, explicit, buf, led))
                 return false;
 
     copy_to_buf(buf, "};\n\n");
@@ -1419,24 +1420,86 @@ write_key(struct xkb_keymap *keymap, enum xkb_keymap_format format,
         break;
     }
 
+    if (key->overlays) {
+        xkb_overlay_mask_t remaining = key->overlays;
+
+        const xkb_overlay_index_t overlay_max = format_max_overlays(format);
+        static_assert(XKB_OVERLAY_MAX == 8, "invalid right shift");
+        const xkb_overlay_mask_t valid =
+            (xkb_overlay_mask_t)((1u << overlay_max) - 1u);
+        remaining &= valid;
+        if (remaining != key->overlays) {
+            log_warn(keymap->ctx, XKB_ERROR_UNSUPPORTED_OVERLAY_INDEX,
+                     "Overlays indices > %u in %s require using "
+                     "keymap format >= v2; "
+                     "keep overlays 0x%08x and discard overlays 0x%08x\n",
+                     overlay_max, KeyNameText(keymap->ctx, name),
+                     remaining, key->overlays & ~valid);
+        }
+
+        if (remaining && !key->overlays_inline &&
+            !areOverlappingOverlaysSupported(format)) {
+            /* isolate lowest set bit */
+            const xkb_overlay_mask_t lsb = (xkb_overlay_mask_t)(
+                remaining &
+                (xkb_overlay_mask_t)(~remaining + 1u)
+            );
+            /* get its index */
+            const xkb_overlay_index_t overlay =
+                (xkb_overlay_index_t)popcount32(lsb - 1u);
+            log_warn(keymap->ctx, XKB_ERROR_OVERLAPPING_OVERLAY,
+                     "Overlapping overlays in %s require using "
+                     "keymap format >= v2; "
+                     "keep overlay %u and discard overlays 0x%x\n",
+                     KeyNameText(keymap->ctx, name), overlay, remaining & ~lsb);
+            remaining = lsb;
+        }
+
+        if (remaining)
+            simple = false;
+
+        const struct xkb_key * const *overlays_keys = (key->overlays_inline)
+                                                    ? &key->overlay_key
+                                                    : key->overlays_keys;
+        while (remaining) {
+            /* isolate lowest set bit */
+            const xkb_overlay_mask_t lsb = (xkb_overlay_mask_t)(
+                remaining &
+                (xkb_overlay_mask_t)(~remaining + 1u)
+            );
+            /* get its index */
+            const xkb_overlay_index_t overlay =
+                (xkb_overlay_index_t)popcount32(lsb - 1u);
+            remaining = (remaining & ~lsb);
+
+            /* pop current value */
+            if (key->overlays_inline && remaining)
+                PANIC_UNREACHABLE();
+            const struct xkb_key *overlay_key = *(overlays_keys++);
+
+            const xkb_atom_t overlay_key_name = (substitutions == NULL)
+                ? overlay_key->name
+                : substitute_name(substitutions, overlay_key->name);
+            write_buf(buf, "\n\t\toverlay%u= %s,",
+                      overlay + 1, KeyNameText(keymap->ctx, overlay_key_name));
+        }
+    }
+
     if (num_groups > 1 || explicit_actions || explicit)
         simple = false;
 
     if (simple) {
-        const bool only_symbols = key->explicit == EXPLICIT_SYMBOLS;
         if (num_groups == 0) {
             /* Remove trailing comma */
             if (buf->buf[buf->size - 1] == ',')
                 buf->size--;
         } else {
-	        if (!only_symbols)
-	            copy_to_buf(buf, "\n\t");
             copy_to_buf(buf, "\t[ ");
             if (!write_keysyms(keymap, buf, buf2, key, 0, pretty, false))
                 return false;
             copy_to_buf(buf, " ]");
         }
-        write_buf(buf, "%s", (only_symbols ? " };\n" : "\n\t};\n"));
+        copy_to_buf(buf, " };\n");
     }
     else {
         for (xkb_layout_index_t group = 0; group < num_groups; group++) {
