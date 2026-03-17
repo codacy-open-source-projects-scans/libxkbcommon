@@ -17,7 +17,7 @@
 #define BENCHMARK_ITERATIONS 3000000
 
 NOINLINE static void
-bench_state_api(struct xkb_state *state)
+bench_client_state_api(struct xkb_state *state)
 {
     bool keys[256] = { 0 };
     volatile unsigned long acc_changed = 0;
@@ -42,9 +42,9 @@ bench_state_api(struct xkb_state *state)
 }
 
 NOINLINE static void
-bench_state_machine_api(struct xkb_state_machine *sm,
-                        struct xkb_event_iterator *events,
-                        struct xkb_state *state)
+bench_server_state_api(struct xkb_server_state *sm,
+                       struct xkb_events *events,
+                       struct xkb_state *state)
 {
     bool keys[256] = { 0 };
     volatile unsigned long acc_ret = 0;
@@ -57,11 +57,11 @@ bench_state_machine_api(struct xkb_state_machine *sm,
         const enum xkb_key_direction direction = (keys[keycode])
                                                ? XKB_KEY_UP : XKB_KEY_DOWN;
         const int ret =
-            xkb_state_machine_update_key(sm, events, keycode, direction);
+            xkb_server_state_update_key(sm, events, keycode, direction);
         acc_ret += (unsigned long)ret;
 
         enum xkb_state_component changed = 0;
-        while ((event = xkb_event_iterator_next(events))) {
+        while ((event = xkb_events_next(events))) {
             changed |= xkb_state_update_from_event(state, event);
         }
         acc_changed += (unsigned long)changed;
@@ -121,7 +121,7 @@ main(void)
     assert(state);
 
     bench_start2(&bench);
-    bench_state_api(state);
+    bench_client_state_api(state);
     bench_stop2(&bench);
 
     xkb_state_unref(state);
@@ -129,34 +129,34 @@ main(void)
     bench_elapsed(&bench, &elapsed);
     average = (bench_time_elapsed_nanoseconds(&elapsed)) / BENCHMARK_ITERATIONS;
     elapsed_str = bench_elapsed_str(&bench);
-    fprintf(stdout, "Simple state machine API: average=%ldns; %d iterations in %ss\n",
+    fprintf(stdout, "Client state API: average=%ldns; %d iterations in %ss\n",
             average, BENCHMARK_ITERATIONS, elapsed_str);
     free(elapsed_str);
 
     /*
-     * Full state machine API
+     * Full server state API
      */
 
-    struct xkb_state_machine *sm = xkb_state_machine_new(keymap, NULL);
+    struct xkb_server_state *sm = xkb_server_state_new(keymap, NULL);
     assert(sm);
-    struct xkb_event_iterator *events =
-        xkb_event_iterator_new(ctx, XKB_EVENT_ITERATOR_NO_FLAGS);
+    struct xkb_events *events =
+        xkb_events_new(ctx, XKB_EVENTS_NO_FLAGS);
     assert(events);
     state = xkb_state_new(keymap);
     assert(state);
 
     bench_start2(&bench);
-    bench_state_machine_api(sm, events, state);
+    bench_server_state_api(sm, events, state);
     bench_stop2(&bench);
 
     xkb_state_unref(state);
-    xkb_event_iterator_destroy(events);
-    xkb_state_machine_unref(sm);
+    xkb_events_destroy(events);
+    xkb_server_state_unref(sm);
 
     bench_elapsed(&bench, &elapsed);
     average = (bench_time_elapsed_nanoseconds(&elapsed)) / BENCHMARK_ITERATIONS;
     elapsed_str = bench_elapsed_str(&bench);
-    fprintf(stdout, "Full   state machine API: average=%ldns, %d iterations in %ss\n",
+    fprintf(stdout, "Server server state API: average=%ldns, %d iterations in %ss\n",
             average, BENCHMARK_ITERATIONS, elapsed_str);
     free(elapsed_str);
 

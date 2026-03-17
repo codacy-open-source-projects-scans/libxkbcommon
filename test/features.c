@@ -47,10 +47,10 @@ test_libxkbcommon_enums(void)
         ENUM(XKB_FEATURE_ENUM_STATE_COMPONENT, xkb_state_component_values, ENUM_FLAG),
         ENUM(XKB_FEATURE_ENUM_KEYBOARD_CONTROL_FLAGS, xkb_keyboard_control_flags_values, ENUM_FLAG),
         ENUM(XKB_FEATURE_ENUM_KEYBOARD_CONTROL_PARAM, xkb_keyboard_control_param_values, ENUM_NONE),
-        ENUM(XKB_FEATURE_ENUM_STATE_ACCESSIBILITY_FLAGS, xkb_state_accessibility_flags_values, ENUM_FLAG),
+        ENUM(XKB_FEATURE_ENUM_ACCESSIBILITY_FLAGS, xkb_accessibility_flags_values, ENUM_FLAG),
         ENUM(XKB_FEATURE_ENUM_OUT_OF_RANGE_LAYOUT_POLICY, xkb_out_of_range_layout_policy_values, ENUM_NONE),
         ENUM(XKB_FEATURE_ENUM_EVENT_TYPE, xkb_event_type_values, ENUM_NONE),
-        ENUM(XKB_FEATURE_ENUM_EVENT_ITERATOR_FLAGS, xkb_event_iterator_flags_values, ENUM_FLAG),
+        ENUM(XKB_FEATURE_ENUM_EVENTS_FLAGS, xkb_events_flags_values, ENUM_FLAG),
         ENUM(XKB_FEATURE_ENUM_KEY_DIRECTION, xkb_key_direction_values, ENUM_NONE),
         ENUM(XKB_FEATURE_ENUM_STATE_MATCH, xkb_state_match_values, ENUM_FLAG),
         ENUM(XKB_FEATURE_ENUM_CONSUMED_MODE, xkb_consumed_mode_values, ENUM_NONE),
@@ -95,10 +95,12 @@ test_libxkbcommon_enums(void)
             assert(!xkb_has_feature(feature, -1));
             assert(!xkb_has_feature(feature, INT_MIN));
             /* No high positive values */
-            assert(max <= XKB_KEYBOARD_CONTROL_OVERLAY8);
+            #define ENUM_HIGHEST_VALUE XKB_STATE_MATCH_NON_EXCLUSIVE
+            assert(max <= ENUM_HIGHEST_VALUE);
             /* Invalid mask */
-            static_assert(XKB_KEYBOARD_CONTROL_OVERLAY8 < (INT_MAX >> 1), "");
-            assert(!xkb_has_feature(feature, (XKB_KEYBOARD_CONTROL_OVERLAY8 << 1)));
+            static_assert(ENUM_HIGHEST_VALUE < (INT_MAX >> 1), "");
+            assert(!xkb_has_feature(feature, (ENUM_HIGHEST_VALUE << 1)));
+            #undef ENUM_HIGHEST_VALUE
             if (max > 0) {
                 assert(!xkb_has_feature(feature, (max << 1)));
                 assert(!xkb_has_feature(feature, max | (max << 1)));

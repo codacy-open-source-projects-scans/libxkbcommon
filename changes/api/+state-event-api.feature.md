@@ -1,21 +1,21 @@
 Added the **state event API:**
-- `struct xkb_state_machine` (new):
-  - `xkb_state_machine_new()`
-  - `xkb_state_machine_ref()`
-  - `xkb_state_machine_unref()`
-  - `xkb_state_machine_get_keymap()`
-  - `xkb_state_machine_update_latched_locked()`
-  - `xkb_state_machine_update_enabled_controls()`
-  - `xkb_state_machine_update_key()`
-- `struct xkb_state_machine_options` (new):
-  - `xkb_state_machine_options_new()`
-  - `xkb_state_machine_options_destroy()`
-  - `xkb_state_machine_options_update_a11y_flags()`
-- `struct xkb_event_iterator` (new):
-  - `enum xkb_event_iterator_flags`
-  - `xkb_event_iterator_new()`
-  - `xkb_event_iterator_destroy()`
-  - `xkb_event_iterator_next()`
+- `struct xkb_server_state` (new):
+  - `xkb_server_state_new()`
+  - `xkb_server_state_ref()`
+  - `xkb_server_state_unref()`
+  - `xkb_server_state_get_keymap()`
+  - `xkb_server_state_update_latched_locked()`
+  - `xkb_server_state_update_enabled_controls()`
+  - `xkb_server_state_update_key()`
+- `struct xkb_server_options` (new):
+  - `xkb_server_options_new()`
+  - `xkb_server_options_destroy()`
+  - `xkb_server_options_update_a11y_flags()`
+- `struct xkb_events` (new):
+  - `enum xkb_events_flags`
+  - `xkb_events_new()`
+  - `xkb_events_destroy()`
+  - `xkb_events_next()`
 - `struct xkb_event` (new):
   - `xkb_event_get_type()`
   - `xkb_event_get_keycode()`

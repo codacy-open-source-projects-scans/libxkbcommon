@@ -103,11 +103,11 @@ enum xkb_feature {
      */
     XKB_FEATURE_ENUM_KEYBOARD_CONTROL_PARAM = 3030,
     /**
-     * The enumeration @ref xkb_state_accessibility_flags
+     * The enumeration @ref xkb_accessibility_flags
      *
      * @since 1.14.0
      */
-    XKB_FEATURE_ENUM_STATE_ACCESSIBILITY_FLAGS = 3100,
+    XKB_FEATURE_ENUM_ACCESSIBILITY_FLAGS = 3100,
     /**
      * The enumeration @ref xkb_out_of_range_layout_policy
      *
@@ -121,11 +121,11 @@ enum xkb_feature {
      */
     XKB_FEATURE_ENUM_EVENT_TYPE = 3200,
     /**
-     * The enumeration @ref xkb_event_iterator_flags
+     * The enumeration @ref xkb_events_flags
      *
      * @since 1.14.0
      */
-    XKB_FEATURE_ENUM_EVENT_ITERATOR_FLAGS = 3210,
+    XKB_FEATURE_ENUM_EVENTS_FLAGS = 3210,
     /**
      * The enumeration @ref xkb_key_direction
      *

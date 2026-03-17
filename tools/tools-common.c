@@ -700,13 +700,13 @@ tools_print_state_changes(const char *prefix, struct xkb_state *state,
 
 void
 tools_print_events(const char *prefix, struct xkb_state *state,
-                   struct xkb_event_iterator *events,
+                   struct xkb_events *events,
                    struct xkb_compose_state *compose_state,
                    enum xkb_consumed_mode consumed_mode,
                    enum print_state_options options, bool report_state_changes)
 {
     const struct xkb_event *event;
-    while ((event = xkb_event_iterator_next(events)) != NULL) {
+    while ((event = xkb_events_next(events)) != NULL) {
         const enum xkb_event_type event_type =
             xkb_event_get_type(event);
         switch (event_type) {
@@ -953,7 +953,7 @@ tools_parse_bool(const char *s, enum tools_arg_optionality optional, bool *out)
 }
 
 bool
-tools_parse_controls(const char *raw, struct xkb_state_machine_options *options,
+tools_parse_controls(const char *raw, struct xkb_server_options *options,
                      enum xkb_keyboard_control_flags *controls_affect,
                      enum xkb_keyboard_control_flags *controls_values)
 {
@@ -1068,15 +1068,15 @@ tools_parse_controls(const char *raw, struct xkb_state_machine_options *options,
                 *controls_affect |= XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS;
                 break;
             case CONTROL_FIELD_LATCH_TO_LOCK:
-                ok = xkb_state_machine_options_update_a11y_flags(
-                    options, XKB_STATE_A11Y_LATCH_TO_LOCK,
-                    (disable ? 0 : XKB_STATE_A11Y_LATCH_TO_LOCK)
+                ok = xkb_server_options_update_a11y_flags(
+                    options, XKB_A11Y_LATCH_TO_LOCK,
+                    (disable ? 0 : XKB_A11Y_LATCH_TO_LOCK)
                 ) == 0;
                 break;
             case CONTROL_FIELD_LATCH_SIMULTANEOUS:
-                ok = xkb_state_machine_options_update_a11y_flags(
-                    options, XKB_STATE_A11Y_LATCH_SIMULTANEOUS_KEYS,
-                    (disable ? 0 : XKB_STATE_A11Y_LATCH_SIMULTANEOUS_KEYS)
+                ok = xkb_server_options_update_a11y_flags(
+                    options, XKB_A11Y_LATCH_SIMULTANEOUS_KEYS,
+                    (disable ? 0 : XKB_A11Y_LATCH_SIMULTANEOUS_KEYS)
                 ) == 0;
                 break;
             default:
@@ -1158,7 +1158,7 @@ next:
 
 bool
 tools_parse_modifiers_mappings(const char *raw, struct xkb_keymap *keymap,
-                               struct xkb_state_machine_options *options)
+                               struct xkb_server_options *options)
 {
     const char *start = raw;
     const char *s = start;
@@ -1208,7 +1208,7 @@ tools_parse_modifiers_mappings(const char *raw, struct xkb_keymap *keymap,
             return false;
         }
 
-        if (xkb_state_machine_options_mods_set_mapping(options, source, target)) {
+        if (xkb_server_options_remap_mods(options, source, target)) {
             fprintf(stderr,
                     "ERROR: cannot add modifiers mapping: "
                     "0x%"PRIx32" -> 0x%"PRIx32"\n", source, target);
@@ -1228,11 +1228,11 @@ next:
 
 bool
 tools_parse_shortcuts_mask(const char *raw, struct xkb_keymap *keymap,
-                           struct xkb_state_machine_options *options)
+                           struct xkb_server_options *options)
 {
     xkb_mod_mask_t mask = 0;
     return tools_parse_mod_mask(raw, SIZE_MAX, keymap, &mask) &&
-           !xkb_state_machine_options_shortcuts_update_mods(options, mask, mask);
+           !xkb_server_options_update_shortcut_mods(options, mask, mask);
 }
 
 static int
@@ -1254,7 +1254,7 @@ tools_parse_layout_index1(const char *raw, size_t len, xkb_layout_index_t *out)
 
 bool
 tools_parse_shortcuts_mappings(const char *raw,
-                               struct xkb_state_machine_options *options)
+                               struct xkb_server_options *options)
 {
     const char *start = raw;
     const char *s = start;
@@ -1300,7 +1300,7 @@ tools_parse_shortcuts_mappings(const char *raw,
             return false;
         }
 
-        if (xkb_state_machine_options_shortcuts_set_mapping(options, source, target)) {
+        if (xkb_server_options_remap_shortcut_layout(options, source, target)) {
             fprintf(stderr,
                     "ERROR: cannot add shortcuts layout mapping: "
                     "%"PRIu32" -> %"PRIu32"\n", source, target);

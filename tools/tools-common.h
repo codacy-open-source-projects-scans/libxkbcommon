@@ -66,7 +66,7 @@ tools_print_state_changes(const char *prefix, struct xkb_state *state,
 
 void
 tools_print_events(const char *prefix, struct xkb_state *state,
-                   struct xkb_event_iterator *events,
+                   struct xkb_events *events,
                    struct xkb_compose_state *compose_state,
                    enum xkb_consumed_mode consumed_mode,
                    enum print_state_options options, bool report_state_changes);
@@ -106,24 +106,24 @@ bool
 tools_parse_bool(const char *s, enum tools_arg_optionality optional, bool *out);
 
 bool
-tools_parse_controls(const char *s, struct xkb_state_machine_options *options,
+tools_parse_controls(const char *s, struct xkb_server_options *options,
                      enum xkb_keyboard_control_flags *controls_affect,
                      enum xkb_keyboard_control_flags *controls_values);
 
 void
-tools_reset_modifiers_mappings(struct xkb_state_machine_options *options);
+tools_reset_modifiers_mappings(struct xkb_server_options *options);
 
 bool
 tools_parse_modifiers_mappings(const char *raw, struct xkb_keymap *keymap,
-                               struct xkb_state_machine_options *options);
+                               struct xkb_server_options *options);
 
 bool
 tools_parse_shortcuts_mask(const char *raw, struct xkb_keymap *keymap,
-                           struct xkb_state_machine_options *options);
+                           struct xkb_server_options *options);
 
 bool
 tools_parse_shortcuts_mappings(const char *raw,
-                               struct xkb_state_machine_options *options);
+                               struct xkb_server_options *options);
 
 #ifdef _WIN32
 #define setenv(varname, value, overwrite) _putenv_s((varname), (value))
