@@ -1,19 +1,18 @@
-Added the **state event API:**
-- `struct xkb_server_state` (new):
-  - `xkb_server_state_new()`
-  - `xkb_server_state_ref()`
-  - `xkb_server_state_unref()`
-  - `xkb_server_state_get_keymap()`
-  - `xkb_server_state_update_latched_locked()`
-  - `xkb_server_state_update_enabled_controls()`
-  - `xkb_server_state_update_key()`
-- `struct xkb_server_options` (new):
-  - `xkb_server_options_new()`
-  - `xkb_server_options_destroy()`
-  - `xkb_server_options_update_a11y_flags()`
+Added the **server machine API:**
+- `struct xkb_machine` (new):
+  - `xkb_machine_new()`
+  - `xkb_machine_ref()`
+  - `xkb_machine_unref()`
+  - `xkb_machine_get_keymap()`
+  - `xkb_machine_process_key()`
+  - `xkb_machine_process_synthetic()`
+- `struct xkb_machine_options` (new):
+  - `xkb_machine_options_new()`
+  - `xkb_machine_options_destroy()`
+  - `xkb_machine_options_update_a11y_flags()`
+- `enum xkb_events_flags` (new)
 - `struct xkb_events` (new):
-  - `enum xkb_events_flags`
-  - `xkb_events_new()`
+  - `xkb_events_new_batch()`
   - `xkb_events_destroy()`
   - `xkb_events_next()`
 - `struct xkb_event` (new):
@@ -21,7 +20,7 @@ Added the **state event API:**
   - `xkb_event_get_keycode()`
   - `xkb_event_get_components()`
 - `struct xkb_state`:
-  - `xkb_state_update_from_event()`
+  - `xkb_state_update_event()`
 
 This is the recommended API for **server** applications. It enables the full
 feature set that libxkbcommon supports.

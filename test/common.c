@@ -81,7 +81,7 @@ enum events_consume_flags {
 };
 
 static bool
-consume_events(struct xkb_server_state *sm,
+consume_events(struct xkb_machine *sm,
                struct xkb_events *events,
                struct xkb_state *state,
                enum events_consume_flags flags,
@@ -100,7 +100,7 @@ consume_events(struct xkb_server_state *sm,
             }
             break;
         case XKB_EVENT_TYPE_COMPONENTS_CHANGE:
-            xkb_state_update_from_event(state, event);
+            xkb_state_update_event(state, event);
             break;
         default:
             {} /* Label followed by declaration requires C23 */
@@ -131,7 +131,7 @@ consume_events(struct xkb_server_state *sm,
  * See below for examples.
  */
 int
-test_key_seq_va(struct xkb_keymap *keymap, struct xkb_server_state *sm,
+test_key_seq_va(struct xkb_keymap *keymap, struct xkb_machine *sm,
                 struct xkb_events *events, va_list ap)
 {
     assert(!(!sm ^ !events));
@@ -167,10 +167,10 @@ test_key_seq_va(struct xkb_keymap *keymap, struct xkb_server_state *sm,
 
         xkb_keycode_t kc_new = kc;
         if (events) {
-            /* State event API: consume until the first key event */
+            /* xkb_machine API: consume until the first key event */
             if (op == DOWN || op == REPEAT || op == BOTH) {
-                assert(!xkb_server_state_update_key(
-                    sm, events, kc, (op == REPEAT ? XKB_KEY_REPEATED : XKB_KEY_DOWN)
+                assert(!xkb_machine_process_key(
+                    sm, kc, (op == REPEAT ? XKB_KEY_REPEATED : XKB_KEY_DOWN), events
                 ));
                 assert(consume_events(sm, events, state, UNTIL_KEY_EVENT, &kc_new));
             }
@@ -179,7 +179,7 @@ test_key_seq_va(struct xkb_keymap *keymap, struct xkb_server_state *sm,
                     /* Consume pending events */
                     assert(consume_events(sm, events, state, ALL_EVENTS, &kc_new));
                 }
-                assert(xkb_server_state_update_key(sm, events, kc, XKB_KEY_UP)
+                assert(xkb_machine_process_key(sm, kc, XKB_KEY_UP, events)
                        == 0);
                 assert(consume_events(sm, events, state, UNTIL_KEY_EVENT, &kc_new));
             }
@@ -189,7 +189,7 @@ test_key_seq_va(struct xkb_keymap *keymap, struct xkb_server_state *sm,
         const int nsyms = xkb_state_key_get_syms(state, kc_new, &syms);
 
         if (events) {
-            /* State event API: consume the rest of events */
+            /* xkb_machine API: consume the rest of events */
             assert(consume_events(sm, events, state, ALL_EVENTS, &kc_new));
         } else {
             /* Legacy state API */
@@ -288,14 +288,14 @@ test_key_seq(struct xkb_keymap *keymap, ...)
 }
 
 int
-test_key_seq2(struct xkb_keymap *keymap, struct xkb_server_state *state,
+test_key_seq2(struct xkb_keymap *keymap, struct xkb_machine *sm,
               struct xkb_events *events, ...)
 {
     va_list ap;
     int ret;
 
     va_start(ap, events);
-    ret = test_key_seq_va(keymap, state, events, ap);
+    ret = test_key_seq_va(keymap, sm, events, ap);
     va_end(ap);
 
     return ret;

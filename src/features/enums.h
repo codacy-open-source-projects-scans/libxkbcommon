@@ -42,22 +42,18 @@ static_assert(XKB_EVENT_TYPE_KEY_UP >= 0 &&
               XKB_EVENT_TYPE_KEY_UP < INT_WIDTH, "");
 static_assert(XKB_EVENT_TYPE_COMPONENTS_CHANGE >= 0 &&
               XKB_EVENT_TYPE_COMPONENTS_CHANGE < INT_WIDTH, "");
-static_assert(XKB_KEYBOARD_CONTROL_OUT_OF_RANGE_LAYOUT_POLICY >= 0 &&
-              XKB_KEYBOARD_CONTROL_OUT_OF_RANGE_LAYOUT_POLICY < INT_WIDTH, "");
-static_assert(XKB_KEYBOARD_CONTROL_OUT_OF_RANGE_LAYOUT_REDIRECT >= 0 &&
-              XKB_KEYBOARD_CONTROL_OUT_OF_RANGE_LAYOUT_REDIRECT < INT_WIDTH, "");
-static_assert(XKB_OUT_OF_RANGE_LAYOUT_WRAP >= 0 &&
-              XKB_OUT_OF_RANGE_LAYOUT_WRAP < INT_WIDTH, "");
-static_assert(XKB_OUT_OF_RANGE_LAYOUT_CLAMP >= 0 &&
-              XKB_OUT_OF_RANGE_LAYOUT_CLAMP < INT_WIDTH, "");
-static_assert(XKB_OUT_OF_RANGE_LAYOUT_REDIRECT >= 0 &&
-              XKB_OUT_OF_RANGE_LAYOUT_REDIRECT < INT_WIDTH, "");
 static_assert(XKB_KEY_UP >= 0 &&
               XKB_KEY_UP < INT_WIDTH, "");
 static_assert(XKB_KEY_DOWN >= 0 &&
               XKB_KEY_DOWN < INT_WIDTH, "");
 static_assert(XKB_KEY_REPEATED >= 0 &&
               XKB_KEY_REPEATED < INT_WIDTH, "");
+static_assert(XKB_LAYOUT_OUT_OF_RANGE_WRAP >= 0 &&
+              XKB_LAYOUT_OUT_OF_RANGE_WRAP < INT_WIDTH, "");
+static_assert(XKB_LAYOUT_OUT_OF_RANGE_CLAMP >= 0 &&
+              XKB_LAYOUT_OUT_OF_RANGE_CLAMP < INT_WIDTH, "");
+static_assert(XKB_LAYOUT_OUT_OF_RANGE_REDIRECT >= 0 &&
+              XKB_LAYOUT_OUT_OF_RANGE_REDIRECT < INT_WIDTH, "");
 static_assert(XKB_CONSUMED_MODE_XKB >= 0 &&
               XKB_CONSUMED_MODE_XKB < INT_WIDTH, "");
 static_assert(XKB_CONSUMED_MODE_GTK >= 0 &&
@@ -110,11 +106,6 @@ enum xkb_enumerations_values {
         | XKB_KEYMAP_KEY_ITERATOR_DESCENDING_ORDER
         | XKB_KEYMAP_KEY_ITERATOR_SKIP_UNBOUND
     ,
-    XKB_ACCESSIBILITY_FLAGS_VALUES
-        = XKB_A11Y_NO_FLAGS
-        | XKB_A11Y_LATCH_TO_LOCK
-        | XKB_A11Y_LATCH_SIMULTANEOUS_KEYS
-    ,
     XKB_EVENT_TYPE_VALUES
         = (1u << XKB_EVENT_TYPE_KEY_DOWN)
         | (1u << XKB_EVENT_TYPE_KEY_REPEATED)
@@ -134,7 +125,7 @@ enum xkb_enumerations_values {
         | XKB_STATE_CONTROLS
     ,
     XKB_KEYBOARD_CONTROL_FLAGS_VALUES
-        = XKB_KEYBOARD_CONTROL_NONE
+        = XKB_KEYBOARD_CONTROL_NO_FLAGS
         | XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS
         | XKB_KEYBOARD_CONTROL_OVERLAY1
         | XKB_KEYBOARD_CONTROL_OVERLAY2
@@ -148,19 +139,20 @@ enum xkb_enumerations_values {
     XKB_EVENTS_FLAGS_VALUES
         = XKB_EVENTS_NO_FLAGS
     ,
-    XKB_KEYBOARD_CONTROL_PARAM_VALUES
-        = (1u << XKB_KEYBOARD_CONTROL_OUT_OF_RANGE_LAYOUT_POLICY)
-        | (1u << XKB_KEYBOARD_CONTROL_OUT_OF_RANGE_LAYOUT_REDIRECT)
-    ,
-    XKB_OUT_OF_RANGE_LAYOUT_POLICY_VALUES
-        = (1u << XKB_OUT_OF_RANGE_LAYOUT_WRAP)
-        | (1u << XKB_OUT_OF_RANGE_LAYOUT_CLAMP)
-        | (1u << XKB_OUT_OF_RANGE_LAYOUT_REDIRECT)
+    XKB_A11Y_FLAGS_VALUES
+        = XKB_A11Y_NO_FLAGS
+        | XKB_A11Y_LATCH_TO_LOCK
+        | XKB_A11Y_LATCH_SIMULTANEOUS_KEYS
     ,
     XKB_KEY_DIRECTION_VALUES
         = (1u << XKB_KEY_UP)
         | (1u << XKB_KEY_DOWN)
         | (1u << XKB_KEY_REPEATED)
+    ,
+    XKB_LAYOUT_OUT_OF_RANGE_POLICY_VALUES
+        = (1u << XKB_LAYOUT_OUT_OF_RANGE_WRAP)
+        | (1u << XKB_LAYOUT_OUT_OF_RANGE_CLAMP)
+        | (1u << XKB_LAYOUT_OUT_OF_RANGE_REDIRECT)
     ,
     XKB_STATE_MATCH_VALUES
         = XKB_STATE_MATCH_ANY
@@ -258,14 +250,6 @@ static const int xkb_keymap_key_iterator_flags_values[] = {
 #endif
 
 #ifdef ENABLE_PRIVATE_APIS
-static const int xkb_accessibility_flags_values[] = {
-    XKB_A11Y_NO_FLAGS,
-    XKB_A11Y_LATCH_TO_LOCK,
-    XKB_A11Y_LATCH_SIMULTANEOUS_KEYS,
-};
-#endif
-
-#ifdef ENABLE_PRIVATE_APIS
 static const int xkb_event_type_values[] = {
     XKB_EVENT_TYPE_KEY_DOWN,
     XKB_EVENT_TYPE_KEY_REPEATED,
@@ -291,7 +275,7 @@ static const int xkb_state_component_values[] = {
 
 #ifdef ENABLE_PRIVATE_APIS
 static const int xkb_keyboard_control_flags_values[] = {
-    XKB_KEYBOARD_CONTROL_NONE,
+    XKB_KEYBOARD_CONTROL_NO_FLAGS,
     XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS,
     XKB_KEYBOARD_CONTROL_OVERLAY1,
     XKB_KEYBOARD_CONTROL_OVERLAY2,
@@ -311,17 +295,10 @@ static const int xkb_events_flags_values[] = {
 #endif
 
 #ifdef ENABLE_PRIVATE_APIS
-static const int xkb_keyboard_control_param_values[] = {
-    XKB_KEYBOARD_CONTROL_OUT_OF_RANGE_LAYOUT_POLICY,
-    XKB_KEYBOARD_CONTROL_OUT_OF_RANGE_LAYOUT_REDIRECT,
-};
-#endif
-
-#ifdef ENABLE_PRIVATE_APIS
-static const int xkb_out_of_range_layout_policy_values[] = {
-    XKB_OUT_OF_RANGE_LAYOUT_WRAP,
-    XKB_OUT_OF_RANGE_LAYOUT_CLAMP,
-    XKB_OUT_OF_RANGE_LAYOUT_REDIRECT,
+static const int xkb_a11y_flags_values[] = {
+    XKB_A11Y_NO_FLAGS,
+    XKB_A11Y_LATCH_TO_LOCK,
+    XKB_A11Y_LATCH_SIMULTANEOUS_KEYS,
 };
 #endif
 
@@ -330,6 +307,14 @@ static const int xkb_key_direction_values[] = {
     XKB_KEY_UP,
     XKB_KEY_DOWN,
     XKB_KEY_REPEATED,
+};
+#endif
+
+#ifdef ENABLE_PRIVATE_APIS
+static const int xkb_layout_out_of_range_policy_values[] = {
+    XKB_LAYOUT_OUT_OF_RANGE_WRAP,
+    XKB_LAYOUT_OUT_OF_RANGE_CLAMP,
+    XKB_LAYOUT_OUT_OF_RANGE_REDIRECT,
 };
 #endif
 
@@ -394,9 +379,8 @@ static const int xkb_feature_values[] = {
     XKB_FEATURE_ENUM_KEYSYM_FLAGS,
     XKB_FEATURE_ENUM_STATE_COMPONENT,
     XKB_FEATURE_ENUM_KEYBOARD_CONTROL_FLAGS,
-    XKB_FEATURE_ENUM_KEYBOARD_CONTROL_PARAM,
-    XKB_FEATURE_ENUM_ACCESSIBILITY_FLAGS,
-    XKB_FEATURE_ENUM_OUT_OF_RANGE_LAYOUT_POLICY,
+    XKB_FEATURE_ENUM_A11Y_FLAGS,
+    XKB_FEATURE_ENUM_LAYOUT_OUT_OF_RANGE_POLICY,
     XKB_FEATURE_ENUM_EVENT_TYPE,
     XKB_FEATURE_ENUM_EVENTS_FLAGS,
     XKB_FEATURE_ENUM_KEY_DIRECTION,

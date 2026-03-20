@@ -48,6 +48,7 @@ extern "C" {
 
 /**
  * @struct xkb_context
+ * @ingroup context
  * Opaque top level library context object.
  *
  * The context contains various general library data and state, like
@@ -61,6 +62,7 @@ struct xkb_context;
 
 /**
  * @struct xkb_keymap
+ * @ingroup keymap
  * Opaque compiled keymap object.
  *
  * The keymap object holds all of the static keyboard information obtained
@@ -72,27 +74,40 @@ struct xkb_context;
 struct xkb_keymap;
 
 /**
- * @struct xkb_server_state
- * Opaque keyboard server state object for the server.
+ * @struct xkb_machine
+ * @ingroup state
+ * Opaque XKB state machine object.
  *
- * Server state objects contain the active state of a keyboard (or keyboards)
- * at the *server* side. It acts as a simple state machine, wherein key presses
- * and releases are the input, and [keyboard events] are the output.
+ * `xkb_machine` is a [Mealy machine]<!-- -->: it is a finite-state machine that
+ * takes a stream of raw key events – a pair ([keycode], [direction]) – as input,
+ * and produces a stream of atomic [XKB events](@ref xkb_event) as output. Output
+ * depends on *both* the input and the current internal state (active modifiers,
+ * current layout, etc.).
  *
- * This API is intended for *server* applications; see @ref
- * server-client-state for details.
+ * This is the authoritative object for *server-side* XKB processing.
+ *
+ * @note To query the resulting keyboard state (active modifiers, current
+ * layout, LED states, etc.), pair this object with an `xkb_state` updated via
+ * `xkb_state::xkb_state_update_event()`. The `xkb_state` object is the
+ * *observable state* of the machine and provides the full query API.
+ *
+ * See @ref server-client-state for details.
  *
  * See the [example for a Wayland server](@ref quick-guide-wayland-server)
  * in the quick guide.
  *
  * @since 1.14.0
  *
+ * [Mealy machine]: https://en.wikipedia.org/wiki/Mealy_machine
+ * [keycode]: @ref xkb_keycode_t
+ * [direction]: @ref xkb_key_direction
  * [keyboard events]: @ref xkb_event
  */
-struct xkb_server_state;
+struct xkb_machine;
 
 /**
  * @struct xkb_state
+ * @ingroup state
  * Opaque keyboard state object.
  *
  * State objects contain the active state of a keyboard (or keyboards), such
@@ -100,7 +115,38 @@ struct xkb_server_state;
  * simple state machine, wherein key presses and releases are the input, and
  * key symbols (keysyms) are the output.
  *
- * See the [examples for clients](@ref quick-guide-clients) in the quick guide.
+ * This object serves 3 roles:
+ * <dl>
+ * <dt>*Client* API</dt>
+ * <dd>
+ * Update the state from server serializations via `xkb_state_update_mask()`,
+ * then query it (keysyms, modifiers, layout, LEDs).
+ *
+ * See the [examples](@ref quick-guide-clients) in the quick guide.
+ * </dd>
+ * <dt>Server query companion</dt>
+ * <dd>
+ * Update via `xkb_state_update_event()` to expose the full query API
+ * alongside an [`xkb_machine`](@ref xkb_machine): `xkb_machine` is the
+ * [Mealy machine] that processes keyboard input; `xkb_state` is its
+ * *observable state*, exposing the query API.
+ *
+ * See [examples](@ref quick-guide-wayland-server) in the quick guide.
+ * </dd>
+ * <dt>Legacy *server* API</dt>
+ * <dd>
+ * Update the state directly via `xkb_state_update_key()`, then query it.
+ *
+ * @deprecated Since 1.14.0, prefer `xkb_machine` for new server
+ * applications.
+ * <!-- blank required by Doxygen -->
+ *
+ * </dd>
+ * </dl>
+ *
+ * See @ref server-client-state for details.
+ *
+ * [Mealy machine]: https://en.wikipedia.org/wiki/Mealy_machine
  */
 struct xkb_state;
 
@@ -972,8 +1018,8 @@ xkb_context_get_user_data(struct xkb_context *context);
  *
  * The default include paths are, in that lookup order:
  * - The path `$XDG_CONFIG_HOME/xkb`, where `$XDG_CONFIG_HOME` is the value of
-     the environment variable `XDG_CONFIG_HOME`, with the usual fallback to
-     `$HOME/.config/` if unset.
+ *   the environment variable `XDG_CONFIG_HOME`, with the usual fallback to
+ *   `$HOME/.config/` if unset.
  * - The path `$HOME/.xkb`, where `$HOME` is the value of the environment
  *   variable `HOME`.
  * - The `XKB_CONFIG_EXTRA_PATH` environment variable, if defined, otherwise the
@@ -2052,16 +2098,20 @@ xkb_keymap_key_repeats(struct xkb_keymap *keymap, xkb_keycode_t key);
  * There are two corresponding APIs:
  *
  * <dl>
- * <dt>`xkb_server_state`: the *server* API</dt>
+ * <dt>`xkb_machine`: the *server* API</dt>
  * <dd>
  * This is the recommended API for **server** applications. It enables the full
  * feature set that libxkbcommon supports.
  *
- * This API enables to generate a sequence of [events][event] corresponding to
- * *atomic* state changes, contrary to the `xkb_state` API that cannot generate
- * events. Additionally, the event API supports events other than state
- * components changes, such as keys events, so that it enables to handle most of
- * the XKB [key actions](@ref key-action-def).
+ * `xkb_machine` is a [Mealy machine]<!-- -->: it is a finite-state machine that takes a
+ * stream of raw key events – a pair ([keycode], [direction]) – as input, and
+ * produces a stream of atomic [XKB events](@ref xkb_event) as output. The
+ * observable state of the machine is exposed via a companion `xkb_state`
+ * object updated with `xkb_state::xkb_state_update_event()`.
+ *
+ * Note that the `xkb_machine` API supports events other than state
+ * components changes, such as key press/release events, so that it enables to
+ * handle most of the XKB [key actions](@ref key-action-def).
  *
  * See the [example for a Wayland server](@ref quick-guide-wayland-server)
  * in the quick guide.
@@ -2078,7 +2128,7 @@ xkb_keymap_key_repeats(struct xkb_keymap *keymap, xkb_keycode_t key);
  * mixed.
  *
  * @note Since version 1.14.0, *server* applications should use the
- * `xkb_server_state` API, which supports more features.
+ * `xkb_machine` API, which supports more features.
  *
  * See the [examples for clients](@ref quick-guide-clients) in the quick guide.
  * </dd>
@@ -2086,223 +2136,37 @@ xkb_keymap_key_repeats(struct xkb_keymap *keymap, xkb_keycode_t key);
  *
  * @endparblock
  *
+ * [Mealy machine]: https://en.wikipedia.org/wiki/Mealy_machine
+ * [keycode]: @ref xkb_keycode_t
+ * [direction]: @ref xkb_key_direction
+ * [state machine]: @ref xkb_machine
+ * [keyboard events]: @ref xkb_event
+ * [event batch]: @ref xkb_events
  * [event]: @ref xkb_event
  */
-
-/**
- * @struct xkb_server_options
- * Opaque options object to configure a keyboard state.
- *
- * @since 1.14.0
- */
-struct xkb_server_options;
-
-/**
- * Create a new keyboard server state options object.
- *
- * @param context The context in which to create the options.
- *
- * @returns A new keyboard server state options object, or `NULL` on failure.
- *
- * @since 1.14.0
- *
- * @memberof xkb_server_options
- */
-XKB_EXPORT struct xkb_server_options *
-xkb_server_options_new(struct xkb_context *context);
-
-/**
- * Free a keyboard server state options object.
- *
- * @param options The server state options. If it is `NULL`, this function does
- * nothing.
- *
- * @since 1.14.0
- *
- * @memberof xkb_server_options
- */
-XKB_EXPORT void
-xkb_server_options_destroy(struct xkb_server_options *options);
-
-/**
- * @enum xkb_accessibility_flags
- * Flags for
- * `xkb_server_options::xkb_server_options_update_a11y_flags()`.
- *
- * @since 1.14.0
- */
-enum xkb_accessibility_flags {
-    /**
-     * Do not apply any flags.
-     *
-     * @since 1.14.0
-     */
-    XKB_A11Y_NO_FLAGS = 0,
-    /**
-     * If both `::XKB_A11Y_LATCH_TO_LOCK` and
-     * `::XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS` are activated, they enable
-     * users to [lock] modifier keys without requiring special locking keys.
-     * The user can press a [latch] modifier twice in a row to lock it, and
-     * then unlock it by pressing it one more time.
-     *
-     * @sa `::XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS`
-     * @since 1.14.0
-     *
-     * [latch]: @ref latched-mod-def
-     * [lock]:  @ref locked-mod-def
-     */
-    XKB_A11Y_LATCH_TO_LOCK = (1 << 0),
-    /**
-     * Without this option, the [latch] keys are only triggers if keys are
-     * strictly *sequentially tapped*, e.g.:
-     * 1. `ISO_Level2_Latch` ↓
-     * 2. `ISO_Level2_Latch` ↑
-     * 3. `A` ↓
-     * 4. `A` ↑
-     *
-     * If one wants *multiple* active latches, they must be tapped in sequence:
-     * e.g.:
-     * 1. `ISO_Level2_Latch` ↓
-     * 2. `ISO_Level2_Latch` ↑
-     * 3. `ISO_Level3_Latch` ↓
-     * 4. `ISO_Level3_Latch` ↑
-     * 5. `A` ↓
-     * 6. `A` ↑
-     *
-     * This option relaxes the strict sequence requirement and enable to operate
-     * keys that do not break latches *simultaneously* with a [latch] key, e.g.:
-     * 1. `ISO_Level2_Latch` ↓
-     * 2. `ISO_Level3_Latch` ↓
-     * 3. `ISO_Level2_Latch` ↑
-     * 4. `ISO_Level3_Latch` ↑
-     * 5. `A` ↓
-     * 6. `A` ↑
-     *
-     * This is an extension to the X11 XKB protocol and is enabled by default
-     * when using `::XKB_KEYMAP_FORMAT_TEXT_V2`.
-     *
-     * @since 1.14.0
-     *
-     * [latch]: @ref latched-mod-def
-     */
-    XKB_A11Y_LATCH_SIMULTANEOUS_KEYS = (1 << 1),
-};
-
-/**
- * Update the accessibility flags of a state options object.
- *
- * @param options The state options object to modify.
- * @param affect  Accessibility flags to modify.
- * @param flags   Accessibility flags to set or unset. Only the flags in
- * @p affect are considered.
- *
- * @returns 0 on success, otherwise an error code.
- *
- * @since 1.14.0
- *
- * @memberof xkb_server_options
- */
-XKB_EXPORT int
-xkb_server_options_update_a11y_flags(
-    struct xkb_server_options *options,
-    enum xkb_accessibility_flags affect,
-    enum xkb_accessibility_flags flags
-);
-
-/**
- * Remap a modifier combination, e.g. to make `Control+Alt` act as
- * `LevelThree` (`AltGr`). This help improving *compatibility* across platforms.
- *
- * The remapping takes effect only using
- * `xkb_server_state::xkb_server_state_update_key()` and under certain
- * conditions:
- *
- * - The corresponding *effective* modifiers are active.
- * - The key being processed has a type that does *not* use any of the *source*
- *   modifiers.
- * - There is no other remapping entry with the source modifiers being a
- *   superset of this entry. E.g. `Control+Alt` has priority over `Control`.
- *
- * @param options The state options object to modify.
- * @param source  Modifier combination to remap, using their [encoding].
- *                Must be non-zero, unless both @p source and @p target are 0
- *                to clear all entries.
- * @param target  Modifier combination to remap to, using their [encoding],
- *                or 0 to remove the entry for @p source. If both @p source and
- *                @p target are 0, all entries are cleared.
- *
- * Example:
- *
- * ```c
- * // Remap Control+Alt to LevelThree (AltGr)
- * const xkb_mod_mask_t ctrl = xkb_keymap_mod_get_mask(keymap, XKB_MOD_NAME_CTRL);
- * const xkb_mod_mask_t alt = xkb_keymap_mod_get_mask(keymap, XKB_VMOD_NAME_ALT);
- * const xkb_mod_mask_t level3 = xkb_keymap_mod_get_mask(keymap, XKB_VMOD_NAME_LEVEL3);
- * if (xkb_server_options_remap_mods(options, ctrl | alt, level3)) {
- *     // handle error
- *     …
- * ```
- *
- * @since 1.14.0
- *
- * @memberof xkb_server_options
- *
- * [encoding]: @ref modifiers-encoding
- */
-XKB_EXPORT int
-xkb_server_options_remap_mods(
-    struct xkb_server_options *options,
-    xkb_mod_mask_t source,
-    xkb_mod_mask_t target
-);
-
-/**
- * Set the modifiers that trigger keyboard shortcuts tweak.
- *
- * @param options The state options object to modify.
- * @param affect  See @p mask.
- * @param mask    Modifiers to set, using their [encoding].
- * Only the modifiers in @p affect are considered.
- *
- * @sa `xkb_server_options_remap_shortcut_layout()`
- * @sa `xkb_keymap::xkb_keymap_mod_get_mask2()`
- * @since 1.14.0
- * @memberof xkb_server_options
- *
- * [encoding]: @ref modifiers-encoding
- */
-XKB_EXPORT int
-xkb_server_options_update_shortcut_mods(
-    struct xkb_server_options* options,
-    xkb_mod_mask_t affect, xkb_mod_mask_t mask
-);
-
-/**
- * Set layout mapping for keyboard shortcuts tweak.
- *
- * Enable tweaking keyboard shortcuts by switching the effective layout when
- * any modifier set by `xkb_server_options_update_shortcut_mods()`
- * is active.
- *
- * @param options The state options object to modify.
- * @param source  Source layout.
- * @param target  Target layout.
- *
- * @sa `xkb_server_options_update_shortcut_mods()`
- * @since 1.14.0
- * @memberof xkb_server_options
- */
-XKB_EXPORT int
-xkb_server_options_remap_shortcut_layout(
-    struct xkb_server_options* options,
-    xkb_layout_index_t source, xkb_layout_index_t target
-);
 
 /**
  * @struct xkb_event
  * Opaque keyboard state event object.
  *
+ * Events are produced by `xkb_machine::xkb_machine_process_key()` and
+ * `xkb_machine::xkb_machine_process_synthetic()` and collected into an
+ * `xkb_events` batch. Each event represents one atomic state change or key
+ * action within a frame.
+ *
+ * Inspect the event type with `xkb_event::xkb_event_get_type()`, then extract
+ * data with the appropriate `xkb_event::xkb_event_get_*()` or
+ * `xkb_event::xkb_event_serialize_*()` functions.
+ *
+ * @warning Event pointers are only valid until the next call to
+ * `xkb_machine::xkb_machine_process_key()` or
+ * `xkb_machine::xkb_machine_process_synthetic()` on the
+ * same state machine. Do not store them beyond that point.
+ *
  * @since 1.14.0
+ *
+ * @sa `xkb_event_type`
+ * @sa `xkb_events`
  */
 struct xkb_event;
 
@@ -2341,6 +2205,9 @@ enum xkb_event_type {
 
 /**
  * Get the [type](@ref xkb_event_type) of an event.
+ *
+ * @param event The event to process.
+ * @returns     The event’s type
  *
  * @since 1.14.0
  *
@@ -2413,7 +2280,7 @@ enum xkb_state_component {
      * lock has been pressed again.
      * @endparblock
      *
-     * [Locked modifiers]: @ref latched-mod-def
+     * [Locked modifiers]: @ref locked-mod-def
      */
     XKB_STATE_MODS_LOCKED = (1 << 2),
     /**
@@ -2428,22 +2295,28 @@ enum xkb_state_component {
     XKB_STATE_MODS_EFFECTIVE = (1 << 3),
     /**
      * @parblock
-     * Depressed layout, i.e. a key is physically holding it.
+     * [Depressed layout], i.e. a key is physically holding it.
      * @endparblock
+     *
+     * [Depressed layout]: @ref depressed-group-def
      */
     XKB_STATE_LAYOUT_DEPRESSED = (1 << 4),
     /**
      * @parblock
-     * Latched layout, i.e. will be unset after the next non-modifier
+     * [Latched layout], i.e. will be unset after the next non-modifier
      * key press.
      * @endparblock
+     *
+     * [Latched layout]: @ref latched-group-def
      */
     XKB_STATE_LAYOUT_LATCHED = (1 << 5),
     /**
      * @parblock
-     * Locked layout, i.e. will be unset after the key provoking the lock
+     * [Locked layout], i.e. will be unset after the key provoking the lock
      * has been pressed again.
      * @endparblock
+     *
+     * [Locked layout]: @ref locked-group-def
      */
     XKB_STATE_LAYOUT_LOCKED = (1 << 6),
     /**
@@ -2463,6 +2336,8 @@ enum xkb_state_component {
     /**
      * Effective [keyboard controls]
      *
+     * @since 1.14.0
+     *
      * [keyboard controls]: @ref xkb_keyboard_control_flags
      */
     XKB_STATE_CONTROLS = (1 << 9)
@@ -2476,8 +2351,8 @@ enum xkb_state_component {
  * @param event The event to process.
  *
  * @returns For an event of type `::XKB_EVENT_TYPE_COMPONENTS_CHANGE`,
- * returns the corresponding mask of state components that have changed as a
- * result of the event.  If nothing in the state has changed, returns 0.
+ * returns the corresponding mask of state components that have changed.
+ * If nothing in the state has changed, returns 0.
  * @returns
  * The result is *undefined* if the given event has another type.
  *
@@ -2503,7 +2378,7 @@ enum xkb_keyboard_control_flags {
      *
      * @since 1.14.0
      */
-    XKB_KEYBOARD_CONTROL_NONE = 0,
+    XKB_KEYBOARD_CONTROL_NO_FLAGS = 0,
     /**
      * **Sticky keys** is an accessibility feature primarily aimed at helping
      * people that find it difficult or impossible to press two keys at once.
@@ -2648,49 +2523,69 @@ xkb_event_serialize_layout(const struct xkb_event *event,
 
 /**
  * @struct xkb_events
- * Opaque iterator object over keyboard events.
+ * Opaque keyboard event collection object.
+ *
+ * An `xkb_events` batch collects [keyboard events](@ref xkb_event)
+ * produced atomically by a single call to an `process_*` function such as
+ * `xkb_machine::xkb_machine_process_key()`. Events are consumed
+ * sequentially via `xkb_events_next()`. The collection is reset on each
+ * `process_*` call.
  *
  * @since 1.14.0
+ *
+ * @sa `xkb_events_new_batch()`
+ * @sa `xkb_events_next()`
+ * @sa `xkb_events_destroy()`
+ * @sa `xkb_machine::xkb_machine_process_key()`
+ * @sa `xkb_machine::xkb_machine_process_synthetic()`
  */
 struct xkb_events;
 
 /**
  * @enum xkb_events_flags
- * Flags for `xkb_events::xkb_events_new()`.
+ *
+ * Flags for `xkb_events::xkb_events_new_batch()`.
  *
  * @since 1.14.0
  */
 enum xkb_events_flags {
+    /**
+     * Do not apply any flags.
+     *
+     * @since 1.14.0
+     */
     XKB_EVENTS_NO_FLAGS = 0
 };
 
 /**
- * Create an event queue object.
+ * Create a new [event](@ref xkb_event) batch.
  *
- * @param context The context in which to create the iterator.
- * @param flags   Optional flags for the iterator, or 0.
+ * @param context The context in which to create the batch.
+ * @param flags   Optional flags for the batch, or 0.
  *
- * @returns A new event queue object, or `NULL` on failure.
+ * @returns A new event batch, or `NULL` on failure.
  *
  * @since 1.14.0
  *
  * @sa `xkb_events_destroy()`
+ * @sa `xkb_events_next()`
+ * @sa `xkb_machine::xkb_machine_process_key()`
  *
  * @memberof xkb_events
  */
 XKB_EXPORT struct xkb_events *
-xkb_events_new(struct xkb_context *context, enum xkb_events_flags flags);
+xkb_events_new_batch(struct xkb_context *context, enum xkb_events_flags flags);
 
 /**
- * Free an event queue object.
+ * Free an event collection.
  *
  * @param events
- *     The event queue to free.
+ *     The event collection to free.
  *     If it is `NULL`, this function does nothing.
  *
  * @since 1.14.0
  *
- * @sa `xkb_events_new()`
+ * @sa `xkb_events_new_batch()`
  *
  * @memberof xkb_events
  */
@@ -2698,11 +2593,11 @@ XKB_EXPORT void
 xkb_events_destroy(struct xkb_events *events);
 
 /**
- * Get the next event queued in an event queue object.
+ * Get the next event from an event collection.
  *
- * @param events The event queue.
+ * @param events The event collection.
  *
- * @returns The next event, or `NULL` if the queue is empty.
+ * @returns The next event, or `NULL` if there are no more events to read.
  *
  * @since 1.14.0
  *
@@ -2712,169 +2607,307 @@ XKB_EXPORT const struct xkb_event *
 xkb_events_next(struct xkb_events *events);
 
 /**
- * Create a new keyboard server state object.
+ * @struct xkb_machine_options
+ * Opaque options object to configure an `xkb_machine`.
  *
- * This entry point is intended for *server* applications; *client* applications
- * should use `xkb_state_new()` instead.
- *
- * @param keymap  The keymap which the state will use.
- * @param options The options to configure the server state, or `NULL` to use
- * the defaults.
- *
- * @returns A new keyboard server state object, or `NULL` on failure.
+ * Create with `xkb_machine_options_new()`, configure with the
+ * `xkb_machine_options_*` functions, then pass to
+ * `xkb_machine::xkb_machine_new()`.
+ * The options object may be destroyed immediately after
+ * `xkb_machine::xkb_machine_new()` returns.
  *
  * @since 1.14.0
  *
- * @memberof xkb_server_state
+ * @sa `xkb_machine_options::xkb_machine_options_new()`
+ * @sa `xkb_machine::xkb_machine_new()`
  */
-XKB_EXPORT struct xkb_server_state *
-xkb_server_state_new(struct xkb_keymap *keymap,
-                     const struct xkb_server_options *options);
+struct xkb_machine_options;
 
 /**
- * Take a new reference on a keyboard server state object.
+ * Create a new `xkb_machine` options object.
  *
- * @param state The server state.
+ * @param context The context in which to create the options.
+ *
+ * @returns A new `xkb_machine` options object, or `NULL` on failure.
+ *
+ * @since 1.14.0
+ *
+ * @memberof xkb_machine_options
+ */
+XKB_EXPORT struct xkb_machine_options *
+xkb_machine_options_new(struct xkb_context *context);
+
+/**
+ * Free a `xkb_machine` options object.
+ *
+ * @param options The `xkb_machine` options. If it is `NULL`, this function does
+ * nothing.
+ *
+ * @since 1.14.0
+ *
+ * @memberof xkb_machine_options
+ */
+XKB_EXPORT void
+xkb_machine_options_destroy(struct xkb_machine_options *options);
+
+/**
+ * @enum xkb_a11y_flags
+ * Flags for
+ * `xkb_machine_options::xkb_machine_options_update_a11y_flags()`.
+ *
+ * These flags configure the accessibility (*a11y*) features.
+ *
+ * @since 1.14.0
+ */
+enum xkb_a11y_flags {
+    /**
+     * Do not apply any flags.
+     *
+     * @since 1.14.0
+     */
+    XKB_A11Y_NO_FLAGS = 0,
+    /**
+     * If both `::XKB_A11Y_LATCH_TO_LOCK` and
+     * `::XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS` are activated, they enable
+     * users to [lock] modifier keys without requiring special locking keys.
+     * The user can press a [latch] modifier twice in a row to lock it, and
+     * then unlock it by pressing it one more time.
+     *
+     * @sa `::XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS`
+     * @since 1.14.0
+     *
+     * [latch]: @ref latched-mod-def
+     * [lock]:  @ref locked-mod-def
+     */
+    XKB_A11Y_LATCH_TO_LOCK = (1 << 0),
+    /**
+     * Without this option, the [latch] keys are only triggers if keys are
+     * strictly *sequentially tapped*, e.g.:
+     * 1. `ISO_Level2_Latch` ↓
+     * 2. `ISO_Level2_Latch` ↑
+     * 3. `A` ↓
+     * 4. `A` ↑
+     *
+     * If one wants *multiple* active latches, they must be tapped in sequence:
+     * e.g.:
+     * 1. `ISO_Level2_Latch` ↓
+     * 2. `ISO_Level2_Latch` ↑
+     * 3. `ISO_Level3_Latch` ↓
+     * 4. `ISO_Level3_Latch` ↑
+     * 5. `A` ↓
+     * 6. `A` ↑
+     *
+     * This option relaxes the strict sequence requirement and enable to operate
+     * keys that do not break latches *simultaneously* with a [latch] key, e.g.:
+     * 1. `ISO_Level2_Latch` ↓
+     * 2. `ISO_Level3_Latch` ↓
+     * 3. `ISO_Level2_Latch` ↑
+     * 4. `ISO_Level3_Latch` ↑
+     * 5. `A` ↓
+     * 6. `A` ↑
+     *
+     * This is an extension to the X11 XKB protocol and is enabled by default
+     * when using `::XKB_KEYMAP_FORMAT_TEXT_V2`.
+     *
+     * @since 1.14.0
+     *
+     * [latch]: @ref latched-mod-def
+     */
+    XKB_A11Y_LATCH_SIMULTANEOUS_KEYS = (1 << 1),
+};
+
+/**
+ * Update the accessibility flags of an `xkb_machine_options` object.
+ *
+ * @param options The `state_machine` options object to modify.
+ * @param affect  Accessibility flags to modify.
+ * @param flags   Accessibility flags to set or unset. Only the flags in
+ * @p affect are considered.
+ *
+ * @returns 0 on success, otherwise an error code.
+ *
+ * @since 1.14.0
+ *
+ * @memberof xkb_machine_options
+ */
+XKB_EXPORT int
+xkb_machine_options_update_a11y_flags(
+    struct xkb_machine_options *options,
+    enum xkb_a11y_flags affect,
+    enum xkb_a11y_flags flags
+);
+
+/**
+ * Remap a modifier combination, e.g. to make `Control+Alt` act as
+ * `LevelThree` (`AltGr`). This help improving *compatibility* across platforms.
+ *
+ * The remapping takes effect only using
+ * `xkb_machine::xkb_machine_process_key()` and under certain
+ * conditions:
+ *
+ * - The corresponding *effective* modifiers are active.
+ * - The key being processed has a type that does *not* use any of the *source*
+ *   modifiers.
+ * - There is no other remapping entry with the source modifiers being a
+ *   superset of this entry. E.g. `Control+Alt` has priority over `Control`.
+ *
+ * @param options The `state_machine` options object to modify.
+ * @param source  Modifier combination to remap, using their [encoding].
+ *                Must be non-zero, unless both @p source and @p target are 0
+ *                to clear all entries.
+ * @param target  Modifier combination to remap to, using their [encoding],
+ *                or 0 to remove the entry for @p source. If both @p source and
+ *                @p target are 0, all entries are cleared.
+ *
+ * @returns 0 on success, otherwise an error code.
+ *
+ * Example:
+ *
+ * ```c
+ * // Remap Control+Alt to LevelThree (AltGr)
+ * const xkb_mod_mask_t ctrl = xkb_keymap_mod_get_mask(keymap, XKB_MOD_NAME_CTRL);
+ * const xkb_mod_mask_t alt = xkb_keymap_mod_get_mask(keymap, XKB_VMOD_NAME_ALT);
+ * const xkb_mod_mask_t level3 = xkb_keymap_mod_get_mask(keymap, XKB_VMOD_NAME_LEVEL3);
+ * if (xkb_machine_options_remap_mods(options, ctrl | alt, level3)) {
+ *     // handle error
+ *     …
+ * }
+ * ```
+ *
+ * @since 1.14.0
+ *
+ * @memberof xkb_machine_options
+ *
+ * [encoding]: @ref modifiers-encoding
+ */
+XKB_EXPORT int
+xkb_machine_options_remap_mods(
+    struct xkb_machine_options *options,
+    xkb_mod_mask_t source,
+    xkb_mod_mask_t target
+);
+
+/**
+ * Set the modifiers that trigger shortcuts keyboard layout override.
+ *
+ * When any of the specified modifiers is active, the effective layout
+ * is substituted according to the mapping set by
+ * `xkb_machine_options_remap_shortcut_layout()`.
+ * This ensures a consistent user experience with keyboard shortcuts
+ * across the layouts.
+ *
+ * @param[in,out] options The `state_machine` options object to modify.
+ * @param[in]     affect  Modifiers to consider, using their [encoding].
+ *                        Only modifiers present in this mask are modified
+ *                        by @p mask.
+ * @param[in]     mask    Modifiers to set, using their [encoding].
+ *                        Only the modifiers in @p affect are considered.
+ *
+ * @returns 0 on success, otherwise an error code.
+ *
+ * @sa `xkb_machine_options_remap_shortcut_layout()`
+ * @sa `xkb_keymap::xkb_keymap_mod_get_mask2()`
+ * @since 1.14.0
+ * @memberof xkb_machine_options
+ *
+ * [encoding]: @ref modifiers-encoding
+ */
+XKB_EXPORT int
+xkb_machine_options_update_shortcut_mods(struct xkb_machine_options *options,
+                                         xkb_mod_mask_t affect,
+                                         xkb_mod_mask_t mask);
+
+/**
+ * Set a layout substitution for the shortcut layout override.
+ *
+ * When any modifier set via `xkb_machine_options_update_shortcut_mods()` is
+ * active, the effective layout @p source is substituted with layout @p target
+ * in key processing. This allows shortcuts defined in layout @p target
+ * (typically a Latin layout) to remain reachable when layout @p source is
+ * active.
+ *
+ * @param[in,out] options The `state_machine` options object to modify.
+ * @param[in]     source  Source layout to substitute.
+ * @param[in]     target  Target layout to use instead of @p source.
+ *
+ * @returns 0 on success, otherwise an error code.
+ *
+ * @sa `xkb_machine_options_update_shortcut_mods()`
+ * @since 1.14.0
+ * @memberof xkb_machine_options
+ */
+XKB_EXPORT int
+xkb_machine_options_remap_shortcut_layout(struct xkb_machine_options *options,
+                                          xkb_layout_index_t source,
+                                          xkb_layout_index_t target);
+
+/**
+ * Create a new keyboard state machine object.
+ *
+ * This entry point is intended for *server* applications; *client* applications
+ * should not run a state machine locally: instead they should use the
+ * `xkb_state` API and process server state update using
+ * `xkb_state::xkb_state_update_mask()`.
+ * See @ref server-client-state for  further information.
+ *
+ * @param keymap  The keymap which the state machine will use.
+ * @param options The options to configure the state machine, or `NULL` to use
+ * the defaults.
+ *
+ * @returns A new keyboard state machine object, or `NULL` on failure.
+ *
+ * @since 1.14.0
+ *
+ * @memberof xkb_machine
+ */
+XKB_EXPORT struct xkb_machine *
+xkb_machine_new(struct xkb_keymap *keymap,
+                const struct xkb_machine_options *options);
+
+/**
+ * Take a new reference on a `xkb_machine` object.
+ *
+ * @param machine The state machine.
  *
  * @returns The passed in object.
  *
  * @since 1.14.0
  *
- * @memberof xkb_server_state
+ * @memberof xkb_machine
  */
-XKB_EXPORT struct xkb_server_state *
-xkb_server_state_ref(struct xkb_server_state *state);
+XKB_EXPORT struct xkb_machine *
+xkb_machine_ref(struct xkb_machine *machine);
 
 /**
- * Release a reference on a keyboard server state object, and possibly free it.
+ * Release a reference on a `xkb_machine` object, and possibly free it.
  *
- * @param state The server state.  If it is `NULL`, this function does nothing.
+ * @param machine The state machine.  If it is `NULL`, this function does nothing.
  *
  * @since 1.14.0
  *
- * @memberof xkb_server_state
+ * @memberof xkb_machine
  */
 XKB_EXPORT void
-xkb_server_state_unref(struct xkb_server_state *state);
+xkb_machine_unref(struct xkb_machine *machine);
 
 /**
- * Get the keymap which a keyboard server state object is using.
+ * Get the keymap which a `xkb_machine` object is using.
  *
- * @param state The server state.
+ * @param machine The state machine.
  *
- * @returns The keymap which was passed to `xkb_server_state_new()` when
- * creating this server state object.
+ * @returns The keymap which was passed to `xkb_machine_new()` when
+ * creating this `xkb_machine` object.
  *
  * @warning This function does not take a new reference on the keymap; you must
  * explicitly reference it yourself if you plan to use it beyond the
- * lifetime of the server state.
+ * lifetime of the `xkb_machine` object.
  *
  * @since 1.14.0
  *
- * @memberof xkb_server_state
+ * @memberof xkb_machine
  */
 XKB_EXPORT struct xkb_keymap *
-xkb_server_state_get_keymap(const struct xkb_server_state *state);
-
-/**
- * Update the keyboard server state to change the *boolean*
- * [global keyboard controls].
- *
- * @param state  The keyboard server state object.
- * @param events The event queue to store the events. It will be reset.
- * @param affect
- *     *Boolean* global keyboard controls to modify. @p controls contains the
- *     actual values.
- * @param controls
- *     *Boolean* global keyboard controls to lock or unlock. Only controls in
- *     @p affect are considered.
- *
- * @returns 0 on success, otherwise an error code.
- *
- * Non-boolean controls are ignored.
- *
- * @since 1.14.0
- *
- * @memberof xkb_server_state
- *
- * [global keyboard controls]: @ref xkb_keyboard_control_flags
- */
-XKB_EXPORT int
-xkb_server_state_update_enabled_controls(struct xkb_server_state *state,
-                                         struct xkb_events *events,
-                                         enum xkb_keyboard_control_flags affect,
-                                         enum xkb_keyboard_control_flags controls);
-
-/**
- * @enum xkb_keyboard_control_param
- * Specifies a keyboard control with a parameter.
- *
- * @since 1.14.0
- */
-enum xkb_keyboard_control_param {
-    /**
-     * Select the policy to handle out-of-bound layout indices.
-     *
-     * Possible values are defined in the `xkb_out_of_range_layout_policy`
-     * enumeration.
-     *
-     * @since 1.14.0
-     */
-    XKB_KEYBOARD_CONTROL_OUT_OF_RANGE_LAYOUT_POLICY = 0,
-    /**
-     * Select the layout to redirect to if the policiy is
-     * `::XKB_OUT_OF_RANGE_LAYOUT_REDIRECT`.
-     *
-     * @since 1.14.0
-     */
-    XKB_KEYBOARD_CONTROL_OUT_OF_RANGE_LAYOUT_REDIRECT
-};
-
-/**
- * @enum xkb_out_of_range_layout_policy
- * Out-of-range layout policies
- *
- * @since 1.14.0
- */
-enum xkb_out_of_range_layout_policy {
-    /**
-     * Wrap into range using integer modulus (default).
-     *
-     * @since 1.14.0
-     */
-    XKB_OUT_OF_RANGE_LAYOUT_WRAP = 0,
-    /**
-     * Clamp into range, i.e. invalid indices are corrected to the closest
-     * valid bound (0 or highest layout index).
-     *
-     * @since 1.14.0
-     */
-    XKB_OUT_OF_RANGE_LAYOUT_CLAMP,
-    /**
-     * Redirect to a specific [layout index](@ref xkb_layout_index_t).
-     *
-     * @since 1.14.0
-     */
-    XKB_OUT_OF_RANGE_LAYOUT_REDIRECT
-};
-
-/**
- * Update the value of a keyboard control parameter.
- *
- * @param state   The keyboard server state object.
- * @param control Global keyboard control to modify.
- * @param value   Value to set.
- *
- * @returns 0 on success, otherwise an error code.
- *
- * @since 1.14.0
- *
- * @memberof xkb_server_state
- */
-XKB_EXPORT int
-xkb_server_state_update_control(struct xkb_server_state *state,
-                                enum xkb_keyboard_control_param control,
-                                uint32_t value);
+xkb_machine_get_keymap(const struct xkb_machine *machine);
 
 /**
  * @enum xkb_key_direction
@@ -2897,84 +2930,317 @@ enum xkb_key_direction {
 };
 
 /**
- * Generate the series of event corresponding to a given key being pressed or
- * released and update the keyboard state.
+ * Process a key event – a pair ([keycode], [direction]) – through the XKB
+ * [state machine], and collect the resulting [keyboard events] into an
+ * [event batch].
+ *
+ * The produced events form a single *frame*.
+ *
+ * Use this function for in-band (device) inputs.
+ * Use `xkb_machine_update_synthetic()` instead to update the state machine in
+ * response to out-of-band (non-device) inputs, such as UI layout switchers or
+ * accessibility settings changes.
  *
  * A series of calls to this function should be consistent; that is, a call
  * with `::XKB_KEY_DOWN` for a key should be matched by an `::XKB_KEY_UP`; if a
  * key is pressed twice, it should be released twice; etc. Otherwise (e.g. due
  * to missed input events), situations like “stuck modifiers” may occur.
  *
- * @param state     The keyboard server state object.
- * @param events    The event queue to store the events. It will be reset.
- * @param key       The key being operated.
- * @param direction The direction of the key operation.
+ * @param[in,out] machine    The XKB [state machine] object.
+ * @param[in]     key        The keycode of the key being operated.
+ * @param[in]     direction  The direction of the key operation.
+ * @param[out]    events     The event batch to collect events into. It will be
+ *                           reset before collecting.
  *
  * @returns 0 on success, otherwise an error code.
  *
  * @since 1.14.0
  *
- * @memberof xkb_server_state
+ * @sa `xkb_machine_update_synthetic()`
+ *
+ * @memberof xkb_machine
+ *
+ * [keycode]: @ref xkb_keycode_t
+ * [direction]: @ref xkb_key_direction
+ * [state machine]: @ref xkb_machine
+ * [keyboard events]: @ref xkb_event
+ * [event batch]: @ref xkb_events
  */
 XKB_EXPORT int
-xkb_server_state_update_key(struct xkb_server_state *state,
-                            struct xkb_events *events,
-                            xkb_keycode_t key, enum xkb_key_direction direction);
+xkb_machine_process_key(struct xkb_machine *machine,
+                        xkb_keycode_t key, enum xkb_key_direction direction,
+                        struct xkb_events *events);
 
 /**
- * Update the keyboard server state to change the latched and locked state of
- * the modifiers and layout.
+ * @struct xkb_state_components_update
+ * Latched and locked state components for an out-of-band state update.
  *
- * Use this function to update the latched and locked state according to
- * “out of band” (non-device) inputs, such as UI layout switchers.
+ * Carries the modifier, layout and boolean controls assignments for
+ * `xkb_state_update`.
+ * Used to update latched and locked modifiers and layouts atomically via
+ * `xkb_machine::xkb_machine_process_synthetic()`.
+ *
+ * Which fields are considered is determined by `components`:
+ * - `::XKB_STATE_MODS_LATCHED`   → `affect_latched_mods`, `latched_mods`
+ * - `::XKB_STATE_MODS_LOCKED`    → `affect_locked_mods`, `locked_mods`
+ * - `::XKB_STATE_LAYOUT_LATCHED` → `latched_layout`
+ * - `::XKB_STATE_LAYOUT_LOCKED`  → `locked_layout`
+ * - `::XKB_STATE_CONTROLS`       → `affect_controls`, `controls`
+ *
+ * @since 1.14.0
+ *
+ * @sa `xkb_state_update`
+ */
+struct xkb_state_components_update {
+    /**
+     * Size of this structure, for forward-compatibility.
+     *
+     * Must be set to `sizeof(struct xkb_state_components_update)`.
+     * If the caller’s size exceeds the library’s (e.g. version mismatch),
+     * an error is returned unless all extra bytes are zero.
+     */
+    size_t size;
+    /**
+     * Mask of [state components](@ref xkb_state_component) to update.
+     *
+     * The following components are meaningful:
+     * - `::XKB_STATE_MODS_LATCHED`
+     * - `::XKB_STATE_MODS_LOCKED`
+     * - `::XKB_STATE_LAYOUT_LATCHED`
+     * - `::XKB_STATE_LAYOUT_LOCKED`
+     * - `::XKB_STATE_CONTROLS`
+     *
+     * Other components are ignored.
+     */
+    enum xkb_state_component components;
+    /**
+     * Mask of latched modifiers to affect.
+     *
+     * Only modifiers present in this mask are considered when updating
+     * `latched_mods`. Only considered if `::XKB_STATE_MODS_LATCHED` is
+     * set in `components`.
+     */
+    xkb_mod_mask_t affect_latched_mods;
+    /**
+     * Modifiers to set as latched or unlatched.
+     *
+     * Only modifiers in `affect_latched_mods` are considered. Only
+     * considered if `::XKB_STATE_MODS_LATCHED` is set in `components`.
+     */
+    xkb_mod_mask_t latched_mods;
+    /**
+     * Mask of locked modifiers to affect.
+     *
+     * Only modifiers present in this mask are considered when updating
+     * `locked_mods`. Only considered if `::XKB_STATE_MODS_LOCKED` is
+     * set in `components`.
+     */
+    xkb_mod_mask_t affect_locked_mods;
+    /**
+     * Modifiers to set as locked or unlocked.
+     *
+     * Only modifiers in `affect_locked_mods` are considered. Only
+     * considered if `::XKB_STATE_MODS_LOCKED` is set in `components`.
+     */
+    xkb_mod_mask_t locked_mods;
+    /**
+     * Layout to latch.
+     *
+     * May be out of range (including negative); the layout is brought into
+     * range according to the current out-of-range layout policy. Only
+     * considered if `::XKB_STATE_LAYOUT_LATCHED` is set in `components`.
+     *
+     * @sa xkb_layout_index_t
+     */
+    int32_t latched_layout;
+    /**
+     * Layout to lock.
+     *
+     * May be out of range (including negative); the layout is brought into
+     * range according to the current out-of-range layout policy. Only
+     * considered if `::XKB_STATE_LAYOUT_LOCKED` is set in `components`.
+     *
+     * @sa xkb_layout_index_t
+     */
+    int32_t locked_layout;
+    /**
+     * Boolean keyboard controls to affect.
+     *
+     * Only controls present in this mask are considered when updating
+     * `controls`. Only considered if `::XKB_STATE_CONTROLS` is set in
+     * `components`.
+     *
+     * @sa `xkb_keyboard_control_flags`
+     */
+    enum xkb_keyboard_control_flags affect_controls;
+    /**
+     * Boolean keyboard controls to enable or disable.
+     *
+     * Only controls in `affect_controls` are considered. Only considered
+     * if `::XKB_STATE_CONTROLS` is set in `components`.
+     *
+     * @sa `xkb_keyboard_control_flags`
+     */
+    enum xkb_keyboard_control_flags controls;
+};
+
+/**
+ * @enum xkb_layout_out_of_range_policy
+ * Policies defining how to bring out-of-range layout indices into range.
+ *
+ * @since 1.14.0
+ */
+enum xkb_layout_out_of_range_policy {
+    /**
+     * Wrap into range using integer modulus (default).
+     *
+     * @since 1.14.0
+     */
+    XKB_LAYOUT_OUT_OF_RANGE_WRAP = 0,
+    /**
+     * Clamp into range, i.e. invalid indices are corrected to the closest
+     * valid bound (0 or highest layout index).
+     *
+     * @since 1.14.0
+     */
+    XKB_LAYOUT_OUT_OF_RANGE_CLAMP,
+    /**
+     * Redirect to a specific [layout index](@ref xkb_layout_index_t).
+     *
+     * @since 1.14.0
+     */
+    XKB_LAYOUT_OUT_OF_RANGE_REDIRECT
+};
+
+/**
+ * @struct xkb_layout_policy_update
+ * Configures the policy used to bring out-of-range layout indices into range.
+ *
+ * If `policy` is `::XKB_LAYOUT_OUT_OF_RANGE_REDIRECT`, `redirect` specifies
+ * the target layout index; otherwise `redirect` is ignored.
+ *
+ * @since 1.14.0
+ *
+ * @sa `xkb_layout_out_of_range_policy`
+ * @sa `xkb_state_update::layout_policy`
+ */
+struct xkb_layout_policy_update {
+    /**
+     * Size of this structure, for forward-compatibility.
+     *
+     * Must be set to `sizeof(struct xkb_layout_policy_update)`.
+     * If the caller’s size exceeds the library’s (e.g. version mismatch),
+     * an error is returned unless all extra bytes are zero.
+     */
+    size_t size;
+    /**
+     * Policy to use to handle out-of-range layout indices.
+     *
+     * @sa `xkb_layout_out_of_range_policy`
+     */
+    enum xkb_layout_out_of_range_policy policy;
+    /**
+     * Layout index to redirect to when `policy` is
+     * `::XKB_LAYOUT_OUT_OF_RANGE_REDIRECT`. Ignored otherwise.
+     */
+    xkb_layout_index_t redirect;
+};
+
+/**
+ * @struct xkb_state_update
+ * Request to process an out-of-band atomic update through an `xkb_machine` or
+ * `xkb_state`.
+ *
+ * Used with `xkb_state::xkb_state_update_synthetic()` and
+ * `xkb_machine::xkb_machine_process_synthetic()` to atomically
+ * apply any combination of:
+ * - Latched and locked modifier and layout changes (via `components`)
+ * - Boolean keyboard control changes (via `components`)
+ * - Parameterized keyboard control changes (via `layout_policy`)
+ *
+ * A `NULL` pointer means “not set / no change”.
+ *
+ * @since 1.14.0
+ *
+ * @sa `xkb_state::xkb_state_update_synthetic()`
+ * @sa `xkb_machine::xkb_machine_process_synthetic()`
+ * @sa `xkb_state_components_update`
+ * @sa `xkb_layout_policy_update`
+ */
+struct xkb_state_update {
+    /**
+     * Size of this structure, for forward-compatibility.
+     *
+     * Must be set to `sizeof(struct xkb_state_update)`.
+     * If the caller’s size exceeds the library’s (e.g. version mismatch),
+     * an error is returned unless all extra bytes are zero.
+     */
+    size_t size;
+    /**
+     * Components updates, or `NULL` for no change.
+     *
+     * @sa `xkb_state_component`
+     */
+    const struct xkb_state_components_update *components;
+    /**
+     * Out-of-range layout policy update, or `NULL` for no change.
+     *
+     * @sa `xkb_layout_out_of_range_policy`
+     */
+    const struct xkb_layout_policy_update *layout_policy;
+};
+
+/**
+ * Process a *synthetic* (out-of-band) atomic update through the XKB
+ * [state machine], and collect the resulting [keyboard events] into an
+ * [event batch].
+ *
+ * Use this function to update the state machine in response to
+ * out-of-band (non-device) inputs, such as UI layout switchers or
+ * accessibility settings changes.
+ * Use `xkb_machine_process_key()` instead for in-band (device) inputs.
+ *
+ * All changes specified in @p update are applied atomically as a single
+ * *frame*: the resulting events reflect the **net** state change at the
+ * end of the frame, not intermediate steps. In particular, a
+ * `::XKB_EVENT_TYPE_COMPONENTS_CHANGE` event in the batch represents the
+ * cumulative state change for the entire frame — individual intermediate
+ * state transitions are not observable.
+ *
+ * Only latched, locked and control components can be updated out-of-band;
+ * depressed components can only change through key presses via
+ * `xkb_machine_process_key()`.
  *
  * @par Layout out of range
  * @parblock
- *
- * If the effective layout, after taking into account the depressed, latched and
- * locked layout, is out of range (negative or greater than the maximum layout),
- * it is brought into range. Currently, the layout is wrapped using integer
- * modulus (with negative values wrapping from the end). The wrapping behavior
- * may be made configurable in the future.
- *
+ * If the effective layout, after taking into account the depressed, latched
+ * and locked layout, is out of range (negative or greater than the maximum
+ * layout index), it is brought into range according to the current
+ * out-of-range layout policy (see `xkb_layout_out_of_range_policy`).
  * @endparblock
  *
- * @param state  The keyboard server state object.
- * @param events The event queue to store the events. It will be reset.
- * @param affect_latched_mods See @p latched_mods.
- * @param latched_mods
- *     Modifiers to set as latched or unlatched. Only modifiers in
- *     @p affect_latched_mods are considered.
- * @param affect_latched_layout See @p latched_layout.
- * @param latched_layout
- *     Layout to latch. Only considered if @p affect_latched_layout is true.
- *     Maybe be out of range (including negative) -- see note above.
- * @param affect_locked_mods See @p locked_mods.
- * @param locked_mods
- *     Modifiers to set as locked or unlocked. Only modifiers in
- *     @p affect_locked_mods are considered.
- * @param affect_locked_layout See @p locked_layout.
- * @param locked_layout
- *     Layout to lock. Only considered if @p affect_locked_layout is true.
- *     Maybe be out of range (including negative) -- see note above.
+ * @param[in,out] machine The XKB [state machine] object.
+ * @param[in]     update  The update to apply.
+ *                        Must have `xkb_state_update::size` set.
+ * @param[out]    events  The event batch to collect events into. It will be
+ *                        reset before collecting.
  *
  * @returns 0 on success, otherwise an error code.
  *
- * @memberof xkb_server_state
- *
  * @since 1.14.0
+ *
+ * @sa `xkb_state_update`
+ * @sa `xkb_machine_process_key()`
+ * @memberof xkb_machine
+ *
+ * [state machine]: @ref xkb_machine
+ * [keyboard events]: @ref xkb_event
+ * [event batch]: @ref xkb_events
  */
 XKB_EXPORT int
-xkb_server_state_update_latched_locked(struct xkb_server_state *state,
-                                       struct xkb_events *events,
-                                       xkb_mod_mask_t affect_latched_mods,
-                                       xkb_mod_mask_t latched_mods,
-                                       bool affect_latched_layout,
-                                       int32_t latched_layout,
-                                       xkb_mod_mask_t affect_locked_mods,
-                                       xkb_mod_mask_t locked_mods,
-                                       bool affect_locked_layout,
-                                       int32_t locked_layout);
+xkb_machine_process_synthetic(struct xkb_machine *machine,
+                              const struct xkb_state_update *update,
+                              struct xkb_events *events);
 
 /**
  * Create a new keyboard state object.
@@ -3026,32 +3292,6 @@ XKB_EXPORT struct xkb_keymap *
 xkb_state_get_keymap(struct xkb_state *state);
 
 /**
- * Update the keyboard state to change the *boolean* [global keyboard controls].
- *
- * This entry point is intended for *server* applications and should not be used
- * by *client* applications; see @ref server-client-state for details.
- *
- * @param state The keyboard state object.
- * @param affect See @p controls.
- * @param controls
- *     *Boolean* [global keyboard controls] to lock or unlock. Only controls in
- *     @p affect are considered.
- *
- * @returns A mask of state components that have changed as a result of
- * the update.  If nothing in the state has changed, returns 0.
- *
- * @since 1.14.0
- *
- * @memberof xkb_state
- *
- * [global keyboard controls]: @ref xkb_keyboard_control_flags
- */
-XKB_EXPORT enum xkb_state_component
-xkb_state_update_enabled_controls(struct xkb_state *state,
-                                  enum xkb_keyboard_control_flags affect,
-                                  enum xkb_keyboard_control_flags controls);
-
-/**
  * Update the keyboard state to reflect a given key being pressed or
  * released.
  *
@@ -3070,8 +3310,9 @@ xkb_state_update_enabled_controls(struct xkb_state *state,
  * the key event are not affected by the event itself.  This is the
  * conventional behavior.
  *
- * @note This entry point only support a restricted set of libxkbcommon features.
- * See the `xkb_server_state` to enable the full feature set.
+ * @note This is the legacy server entry point and only supports a restricted
+ * set of libxkbcommon features. Since 1.14.0, prefer `xkb_machine` for new
+ * server applications to enable the full feature set.
  *
  * @param state     The keyboard state object.
  * @param key       The key being operated.
@@ -3089,17 +3330,74 @@ xkb_state_update_key(struct xkb_state *state, xkb_keycode_t key,
                      enum xkb_key_direction direction);
 
 /**
+ * Apply a *synthetic* (out-of-band) atomic update to the keyboard state.
+ *
+ * This entry point is intended for *server* applications and should not be used
+ * by *client* applications; see @ref server-client-state for details.
+ *
+ * - Use this function to update the keyboard state in response to
+ *   out-of-band (non-device) inputs, such as UI layout switchers or
+ *   accessibility settings changes.
+ * - Use `xkb_state_update_key()` instead for in-band (device) inputs.
+ * - Use `xkb_state_update_event()` instead when updating from an
+ *   [event](@ref xkb_event) produced by `xkb_machine`.
+ *
+ * Only latched, locked and control components can be updated out-of-band;
+ * depressed components can only change through key presses via
+ * `xkb_state_update_key()`.
+ *
+ * @par Layout out of range
+ * @parblock
+ * If the effective layout, after taking into account the depressed, latched
+ * and locked layout, is out of range (negative or greater than the maximum
+ * layout index), it is brought into range according to the current
+ * out-of-range layout policy (see `xkb_layout_out_of_range_policy`).
+ * @endparblock
+ *
+ * @param[in,out] state   The keyboard state object.
+ * @param[in]     update  The update to apply.
+ *                        Must have `xkb_state_update::size` set.
+ * @param[out]    changed A pointer to store the mask of state components that
+ *                        have changed as a result of the update, or `NULL` to
+ *                        ignore. Set to 0 if nothing in the state has changed.
+ *
+ * @returns 0 on success, otherwise an error code.
+ *
+ * @note This function returns an error code rather than a state component
+ * delta (unlike the other `xkb_state_update_*` functions), in order to align
+ * with the `xkb_machine::xkb_machine_process_synthetic()` API. The delta
+ * is optionally available via the @p changed parameter.
+ *
+ * @since 1.14.0
+ *
+ * @sa `xkb_state_update`
+ * @sa `xkb_state_update_key()`
+ * @sa `xkb_machine::xkb_machine_process_synthetic()`
+ * @memberof xkb_state
+ */
+XKB_EXPORT int
+xkb_state_update_synthetic(struct xkb_state *state,
+                           const struct xkb_state_update *update,
+                           enum xkb_state_component *changed);
+
+/**
  * Update the keyboard state [components](@ref xkb_state_component) from an
  * [event](@ref xkb_event).
  *
  * This entry point is intended for *server* applications and should not be used
  * by *client* applications; see @ref server-client-state for details.
  *
- * @warning The given state object should not be updated by other means than
- * [events](@ref xkb_event), i.e. do not use `xkb_state_update_key()`.
+ * It enables server applications to use `xkb_state` as the observable state
+ * companion to an `xkb_machine`: feed each event produced by
+ * `xkb_machine::xkb_machine_process_key()` or
+ * `xkb_machine::xkb_machine_process_synthetic()` into this
+ * function to keep the observable state in sync.
  *
- * @param state The keyboard state object.
- * @param event The state event to update from.
+ * @warning The given state object should not be updated by other means than
+ * [events](@ref xkb_event), i.e. do not mix with `xkb_state_update_key()`.
+ *
+ * @param[in,out] state The keyboard state object.
+ * @param[in]     event The state event to update from.
  *
  * @returns A mask of state components that have changed as a result of
  * the update.  If nothing in the state has changed, returns 0.
@@ -3109,8 +3407,8 @@ xkb_state_update_key(struct xkb_state *state, xkb_keycode_t key,
  * @memberof xkb_state
  */
 XKB_EXPORT enum xkb_state_component
-xkb_state_update_from_event(struct xkb_state *state,
-                            const struct xkb_event *event);
+xkb_state_update_event(struct xkb_state *state,
+                       const struct xkb_event *event);
 
 /**
  * Update the keyboard state to change the latched and locked state of
@@ -3120,7 +3418,7 @@ xkb_state_update_from_event(struct xkb_state *state,
  * by *client* applications; see @ref server-client-state for details.
  *
  * Use this function to update the latched and locked state according to
- * “out of band” (non-device) inputs, such as UI layout switchers.
+ * out-of-band (non-device) inputs, such as UI layout switchers.
  *
  * @par Layout out of range
  * @parblock
@@ -3129,7 +3427,7 @@ xkb_state_update_from_event(struct xkb_state *state,
  * locked layout, is out of range (negative or greater than the maximum layout),
  * it is brought into range. Currently, the layout is wrapped using integer
  * modulus (with negative values wrapping from the end). The wrapping behavior
- * may be made configurable in the future.
+ * can be configured using `xkb_state_update_synthetic()`.
  *
  * @endparblock
  *
@@ -3141,7 +3439,7 @@ xkb_state_update_from_event(struct xkb_state *state,
  * @param affect_latched_layout See @p latched_layout.
  * @param latched_layout
  *     Layout to latch. Only considered if @p affect_latched_layout is true.
- *     Maybe be out of range (including negative) -- see note above.
+ *     May be out of range (including negative) -- see note above.
  * @param affect_locked_mods See @p locked_mods.
  * @param locked_mods
  *     Modifiers to set as locked or unlocked. Only modifiers in
@@ -3149,14 +3447,16 @@ xkb_state_update_from_event(struct xkb_state *state,
  * @param affect_locked_layout See @p locked_layout.
  * @param locked_layout
  *     Layout to lock. Only considered if @p affect_locked_layout is true.
- *     Maybe be out of range (including negative) -- see note above.
+ *     May be out of range (including negative) -- see note above.
  *
  * @returns A mask of state components that have changed as a result of
  * the update.  If nothing in the state has changed, returns 0.
  *
+ * @deprecated Use `xkb_state_update_synthetic()` instead.
+ *
  * @memberof xkb_state
  *
- * @sa xkb_state_update_mask()
+ * @sa `xkb_state_update_mask()`
  */
 XKB_EXPORT enum xkb_state_component
 xkb_state_update_latched_locked(struct xkb_state *state,

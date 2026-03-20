@@ -33,9 +33,19 @@ update_initial_state(struct xkb_state *state, xcb_connection_t *conn,
         return false;
 
     /* NOTE: Use the public API with private enum values */
-    xkb_state_update_enabled_controls(state,
-                                      (enum xkb_keyboard_control_flags) controls,
-                                      (enum xkb_keyboard_control_flags) controls);
+    const struct xkb_state_components_update components = {
+        .size = sizeof(components),
+        .components = XKB_STATE_CONTROLS,
+        .affect_controls = (enum xkb_keyboard_control_flags) controls,
+        .controls = (enum xkb_keyboard_control_flags) controls,
+    };
+    const struct xkb_state_update update = {
+        .size = sizeof(update),
+        .components = &components,
+    };
+    const int error = xkb_state_update_synthetic(state, &update, NULL);
+    if (error)
+        return false;
 
     xkb_state_update_mask(state,
                           reply->baseMods,
@@ -51,10 +61,10 @@ update_initial_state(struct xkb_state *state, xcb_connection_t *conn,
 
 #if 0
 // TODO: currently unused
-static enum xkb_accessibility_flags
+static enum xkb_a11y_flags
 translate_state_accessibility_flags(const xcb_xkb_get_controls_reply_t *reply)
 {
-    enum xkb_accessibility_flags flags = XKB_A11Y_NO_FLAGS;
+    enum xkb_a11y_flags flags = XKB_A11Y_NO_FLAGS;
     if (reply->accessXOption & XCB_XKB_AX_OPTION_LATCH_TO_LOCK) {
         flags |= XKB_A11Y_LATCH_TO_LOCK;
     }
