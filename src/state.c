@@ -28,6 +28,7 @@
 #include <string.h>
 
 #include "xkbcommon/xkbcommon.h"
+#include "xkbcommon/xkbcommon-errors.h"
 #include "xkbcommon/xkbcommon-features.h"
 #include "darray.h"
 #include "keymap.h"
@@ -1664,7 +1665,7 @@ state_update_enabled_controls(struct xkb_state *state,
     xkb_state_update_derived(state);
 }
 
-static int
+static enum xkb_error_code
 state_update_layout_policy(struct xkb_state *state,
                            const struct xkb_layout_policy_update *update)
 {
@@ -1672,33 +1673,86 @@ state_update_layout_policy(struct xkb_state *state,
                         (int)update->policy)) {
         if (update->policy == XKB_LAYOUT_OUT_OF_RANGE_REDIRECT) {
             if (update->redirect < state->keymap->num_groups) {
-            state->controls.out_of_range_group.redirect_group =
-                update->redirect;
+                state->controls.out_of_range_group.redirect_group =
+                    update->redirect;
             } else {
-                return XKB_ERROR_UNSUPPORTED_GROUP_INDEX;
+                log_err(state->keymap->ctx, XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX,
+                        "Layout policy: "
+                        "unsupported layout index %"PRIu32" > %"PRIu32"\n",
+                        update->redirect + 1, state->keymap->num_groups);
+                return XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX;
             }
         }
         state->controls.out_of_range_group.policy = update->policy;
-        return 0;
+        return XKB_SUCCESS;
     } else {
+        log_err(state->keymap->ctx,
+                XKB_ERROR_UNSUPPORTED_LAYOUT_OUT_OF_RANGE_POLICY,
+                "Unsupported layout policy: %d\n", update->policy);
         return XKB_ERROR_UNSUPPORTED_LAYOUT_OUT_OF_RANGE_POLICY;
     }
 }
 
-int
+static void
+log_abi_error(struct xkb_context * restrict ctx,
+              const char * restrict func, enum xkb_error_code error)
+{
+    switch (error) {
+    case XKB_ERROR_ABI_INVALID_STRUCT_SIZE:
+        log_err(ctx, XKB_ERROR_ABI_INVALID_STRUCT_SIZE,
+                "%s: ABI error: unsupported versioned struct\n", func);
+        break;
+    case XKB_ERROR_ABI_BACKWARD_COMPAT:
+        log_err(ctx, XKB_ERROR_ABI_BACKWARD_COMPAT,
+                "%s: ABI version mismatch: missing newer required fields\n",
+                func);
+        break;
+    case XKB_ERROR_ABI_FORWARD_COMPAT:
+        log_err(ctx, XKB_ERROR_ABI_FORWARD_COMPAT,
+                "%s: ABI version mismatch: cannot use newer fields\n", func);
+        break;
+    default:
+        /* unreachable */
+        assert(false);
+    }
+}
+
+#define xkb_check_state_update_size(x) xkb_check_versioned_struct_size( \
+    xkb_versioned_struct_size_v1(x),                                    \
+    xkb_versioned_struct_size_min(x),                                   \
+    (x)                                                                 \
+)
+
+/* Check ABI compatibility */
+static enum xkb_error_code
+check_state_update_abi_(struct xkb_context *restrict ctx,
+                        const char *restrict func,
+                        const struct xkb_state_update *restrict update)
+{
+    enum xkb_error_code error = XKB_SUCCESS;
+    if ((error = xkb_check_state_update_size(update)) ||
+        (update->components &&
+         (error = xkb_check_state_update_size(update->components))) ||
+        (update->layout_policy &&
+         (error = xkb_check_state_update_size(update->layout_policy)))) {
+        log_abi_error(ctx, func, error);
+    }
+    return error;
+}
+
+#define check_state_update_abi(ctx, update) \
+    check_state_update_abi_(ctx, __func__, update)
+
+enum xkb_error_code
 xkb_state_update_synthetic(struct xkb_state *state,
                            const struct xkb_state_update *update,
                            enum xkb_state_component *changed)
 {
     /* Check ABI compatibility */
-    if (!xkb_check_struct_size(update) ||
-        (update->components && !xkb_check_struct_size(update->components)) ||
-        (update->layout_policy && !xkb_check_struct_size(update->layout_policy))) {
-        log_err(state->keymap->ctx, XKB_ERROR_ABI_FORWARD_COMPAT,
-                "%s: ABI version mismatch: cannot use newer fields.\n ",
-                __func__);
-        return XKB_ERROR_ABI_FORWARD_COMPAT;
-    }
+    enum xkb_error_code error = check_state_update_abi(state->keymap->ctx,
+                                                       update);
+    if (error)
+        return error;
 
     const struct state_components previous_components = state->components;
 
@@ -1707,7 +1761,7 @@ xkb_state_update_synthetic(struct xkb_state *state,
 
     /* Update parametrized controls first */
     if (update->layout_policy) {
-        const int error = state_update_layout_policy(state, update->layout_policy);
+        error = state_update_layout_policy(state, update->layout_policy);
         if (error)
             return error;
     }
@@ -1729,7 +1783,7 @@ xkb_state_update_synthetic(struct xkb_state *state,
         *changed = get_state_component_changes(&previous_components,
                                                &state->components);
     }
-    return 0;
+    return XKB_SUCCESS;
 }
 
 /**
@@ -2616,7 +2670,7 @@ xkb_machine_options_destroy(struct xkb_machine_options *options)
     free(options);
 }
 
-int
+enum xkb_error_code
 xkb_machine_options_update_a11y_flags(
     struct xkb_machine_options *options,
     enum xkb_a11y_flags affect,
@@ -2630,17 +2684,17 @@ xkb_machine_options_update_a11y_flags(
         log_err_func(options->ctx, XKB_LOG_MESSAGE_NO_ID,
                      "unrecognized state flags: %#x\n",
                      (flags & ~XKB_A11Y_FLAGS));
-        return 1;
+        return XKB_ERROR_UNSUPPORTED_A11Y_FLAGS;
     }
 
     options->a11y_affect |= affect;
     options->a11y_flags &= ~affect;
     options->a11y_flags |= (flags & affect);
 
-    return 0;
+    return XKB_SUCCESS;
 }
 
-int
+enum xkb_error_code
 xkb_machine_options_remap_mods(
     struct xkb_machine_options *options,
     xkb_mod_mask_t source,
@@ -2651,9 +2705,9 @@ xkb_machine_options_remap_mods(
         if (!target) {
             /* Reset mappings */
             darray_resize(options->mods, 0);
-            return 0;
+            return XKB_SUCCESS;
         } else {
-            return -1;
+            return XKB_ERROR_UNSUPPORTED_MODIFIER_MASK;
         }
     }
 
@@ -2668,7 +2722,7 @@ xkb_machine_options_remap_mods(
                 /* Update mapping */
                 mapping->target = target;
             }
-            return 0;
+            return XKB_SUCCESS;
         }
     }
 
@@ -2685,30 +2739,30 @@ xkb_machine_options_remap_mods(
         /* Ignore missing mapping */
     }
 
-    return 0;
+    return XKB_SUCCESS;
 }
 
-int
+enum xkb_error_code
 xkb_machine_options_update_shortcut_mods(struct xkb_machine_options *options,
                                          xkb_mod_mask_t affect,
                                          xkb_mod_mask_t mask)
 {
     options->shortcuts.mask &= ~affect;
     options->shortcuts.mask |= (mask & affect);
-    return 0;
+    return XKB_SUCCESS;
 }
 
-int
+enum xkb_error_code
 xkb_machine_options_remap_shortcut_layout(struct xkb_machine_options *options,
                                           xkb_layout_index_t source,
                                           xkb_layout_index_t target)
 {
     if (source >= XKB_MAX_GROUPS || target >= XKB_MAX_GROUPS)
-        return 1;
+        return XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX;
 
     if (target == source) {
         /* Skip default setting */
-        return 0;
+        return XKB_SUCCESS;
     }
 
     struct xkb_shortcuts_config_options * restrict config = &options->shortcuts;
@@ -2725,7 +2779,7 @@ xkb_machine_options_remap_shortcut_layout(struct xkb_machine_options *options,
     darray_item(config->targets, source) = (source == target)
         ? XKB_LAYOUT_INVALID
         : target;
-    return 0;
+    return XKB_SUCCESS;
 }
 
 /** Compare 2 modifiers combinations */
@@ -2974,22 +3028,16 @@ machine_update_overlays(struct xkb_machine *sm)
     sm->overlays.enabled = mask;
 }
 
-int
+enum xkb_error_code
 xkb_machine_process_synthetic(struct xkb_machine *sm,
                               const struct xkb_state_update *update,
                               struct xkb_events *events)
 {
-    int ret = 0;
-
     /* Check ABI compatibility */
-    if (!xkb_check_struct_size(update) ||
-        (update->components && !xkb_check_struct_size(update->components)) ||
-        (update->layout_policy && !xkb_check_struct_size(update->layout_policy))) {
-        log_err(sm->state.keymap->ctx, XKB_ERROR_ABI_FORWARD_COMPAT,
-                "%s: ABI version mismatch: cannot use newer fields.\n ",
-                __func__);
-        return XKB_ERROR_ABI_FORWARD_COMPAT;
-    }
+    enum xkb_error_code error = check_state_update_abi(sm->state.keymap->ctx,
+                                                       update);
+    if (error)
+        return error;
 
     struct xkb_state * restrict const state = &sm->state;
     const struct state_components previous_components = state->components;
@@ -2999,8 +3047,9 @@ xkb_machine_process_synthetic(struct xkb_machine *sm,
 
     /* Update parametrized controls first */
     if (update->layout_policy) {
-        // FIXME: ret is not a mask
-        ret |= state_update_layout_policy(state, update->layout_policy);
+        error = state_update_layout_policy(state, update->layout_policy);
+        if (error)
+            return error;
     }
 
     if (update->components) {
@@ -3034,7 +3083,7 @@ xkb_machine_process_synthetic(struct xkb_machine *sm,
         });
     }
 
-    return ret;
+    return XKB_SUCCESS;
 }
 
 static ssize_t
@@ -3277,7 +3326,7 @@ process_overlayable_key(struct xkb_machine *sm,
     return key;
 }
 
-int
+enum xkb_error_code
 xkb_machine_process_key(struct xkb_machine *sm,
                         xkb_keycode_t kc, enum xkb_key_direction direction,
                         struct xkb_events *events)
@@ -3289,7 +3338,7 @@ xkb_machine_process_key(struct xkb_machine *sm,
     const struct xkb_key * key = XkbKey(state->keymap, kc);
     /* Ignore unknown key and repeat state for non-repeating key */
     if (!key || (direction == XKB_KEY_REPEATED && !key->repeats))
-        return 0;
+        return XKB_SUCCESS;
 
     const struct state_components previous_components = state->components;
 
@@ -3380,7 +3429,7 @@ xkb_machine_process_key(struct xkb_machine *sm,
             }
         });
     }
-    return 0;
+    return XKB_SUCCESS;
 }
 
 struct xkb_events *

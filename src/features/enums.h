@@ -18,6 +18,7 @@
 
 #include "xkbcommon/xkbcommon.h"
 #include "xkbcommon/xkbcommon-compose.h"
+#include "xkbcommon/xkbcommon-errors.h"
 #include "xkbcommon/xkbcommon-features.h"
 
 #ifndef INT_WIDTH
@@ -367,10 +368,23 @@ static const int xkb_compose_feed_result_values[] = {
 };
 #endif
 
+static const int xkb_error_code_values[] = {
+    XKB_ERROR_INVALID,
+    XKB_SUCCESS,
+    XKB_ERROR_UNSUPPORTED_MODIFIER_MASK,
+    XKB_ERROR_UNSUPPORTED_LAYOUT_OUT_OF_RANGE_POLICY,
+    XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX,
+    XKB_ERROR_UNSUPPORTED_A11Y_FLAGS,
+    XKB_ERROR_ABI_INVALID_STRUCT_SIZE,
+    XKB_ERROR_ABI_FORWARD_COMPAT,
+    XKB_ERROR_ABI_BACKWARD_COMPAT,
+};
+
 static const int xkb_feature_values[] = {
     XKB_FEATURE_ENUM_FEATURE,
     XKB_FEATURE_ENUM_CONTEXT_FLAGS,
     XKB_FEATURE_ENUM_LOG_LEVEL,
+    XKB_FEATURE_ENUM_ERROR_CODE,
     XKB_FEATURE_ENUM_KEYMAP_FORMAT,
     XKB_FEATURE_ENUM_KEYMAP_COMPILE_FLAGS,
     XKB_FEATURE_ENUM_RMLVO_BUILDER_FLAGS,

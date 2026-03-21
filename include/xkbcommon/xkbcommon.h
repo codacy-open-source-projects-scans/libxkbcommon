@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 
+#include <xkbcommon/xkbcommon-errors.h>
 #include <xkbcommon/xkbcommon-names.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
@@ -2724,13 +2725,13 @@ enum xkb_a11y_flags {
  * @param flags   Accessibility flags to set or unset. Only the flags in
  * @p affect are considered.
  *
- * @returns 0 on success, otherwise an error code.
+ * @returns `::XKB_SUCCESS` on success, otherwise an error code.
  *
  * @since 1.14.0
  *
  * @memberof xkb_machine_options
  */
-XKB_EXPORT int
+XKB_EXPORT enum xkb_error_code
 xkb_machine_options_update_a11y_flags(
     struct xkb_machine_options *options,
     enum xkb_a11y_flags affect,
@@ -2759,7 +2760,7 @@ xkb_machine_options_update_a11y_flags(
  *                or 0 to remove the entry for @p source. If both @p source and
  *                @p target are 0, all entries are cleared.
  *
- * @returns 0 on success, otherwise an error code.
+ * @returns `::XKB_SUCCESS` on success, otherwise an error code.
  *
  * Example:
  *
@@ -2780,7 +2781,7 @@ xkb_machine_options_update_a11y_flags(
  *
  * [encoding]: @ref modifiers-encoding
  */
-XKB_EXPORT int
+XKB_EXPORT enum xkb_error_code
 xkb_machine_options_remap_mods(
     struct xkb_machine_options *options,
     xkb_mod_mask_t source,
@@ -2803,7 +2804,7 @@ xkb_machine_options_remap_mods(
  * @param[in]     mask    Modifiers to set, using their [encoding].
  *                        Only the modifiers in @p affect are considered.
  *
- * @returns 0 on success, otherwise an error code.
+ * @returns `::XKB_SUCCESS` on success, otherwise an error code.
  *
  * @sa `xkb_machine_options_remap_shortcut_layout()`
  * @sa `xkb_keymap::xkb_keymap_mod_get_mask2()`
@@ -2812,7 +2813,7 @@ xkb_machine_options_remap_mods(
  *
  * [encoding]: @ref modifiers-encoding
  */
-XKB_EXPORT int
+XKB_EXPORT enum xkb_error_code
 xkb_machine_options_update_shortcut_mods(struct xkb_machine_options *options,
                                          xkb_mod_mask_t affect,
                                          xkb_mod_mask_t mask);
@@ -2830,13 +2831,13 @@ xkb_machine_options_update_shortcut_mods(struct xkb_machine_options *options,
  * @param[in]     source  Source layout to substitute.
  * @param[in]     target  Target layout to use instead of @p source.
  *
- * @returns 0 on success, otherwise an error code.
+ * @returns `::XKB_SUCCESS` on success, otherwise an error code.
  *
  * @sa `xkb_machine_options_update_shortcut_mods()`
  * @since 1.14.0
  * @memberof xkb_machine_options
  */
-XKB_EXPORT int
+XKB_EXPORT enum xkb_error_code
 xkb_machine_options_remap_shortcut_layout(struct xkb_machine_options *options,
                                           xkb_layout_index_t source,
                                           xkb_layout_index_t target);
@@ -2952,7 +2953,7 @@ enum xkb_key_direction {
  * @param[out]    events     The event batch to collect events into. It will be
  *                           reset before collecting.
  *
- * @returns 0 on success, otherwise an error code.
+ * @returns `::XKB_SUCCESS` on success, otherwise an error code.
  *
  * @since 1.14.0
  *
@@ -2966,7 +2967,7 @@ enum xkb_key_direction {
  * [keyboard events]: @ref xkb_event
  * [event batch]: @ref xkb_events
  */
-XKB_EXPORT int
+XKB_EXPORT enum xkb_error_code
 xkb_machine_process_key(struct xkb_machine *machine,
                         xkb_keycode_t key, enum xkb_key_direction direction,
                         struct xkb_events *events);
@@ -3225,7 +3226,7 @@ struct xkb_state_update {
  * @param[out]    events  The event batch to collect events into. It will be
  *                        reset before collecting.
  *
- * @returns 0 on success, otherwise an error code.
+ * @returns `::XKB_SUCCESS` on success, otherwise an error code.
  *
  * @since 1.14.0
  *
@@ -3237,7 +3238,7 @@ struct xkb_state_update {
  * [keyboard events]: @ref xkb_event
  * [event batch]: @ref xkb_events
  */
-XKB_EXPORT int
+XKB_EXPORT enum xkb_error_code
 xkb_machine_process_synthetic(struct xkb_machine *machine,
                               const struct xkb_state_update *update,
                               struct xkb_events *events);
@@ -3361,7 +3362,7 @@ xkb_state_update_key(struct xkb_state *state, xkb_keycode_t key,
  *                        have changed as a result of the update, or `NULL` to
  *                        ignore. Set to 0 if nothing in the state has changed.
  *
- * @returns 0 on success, otherwise an error code.
+ * @returns `::XKB_SUCCESS` on success, otherwise an error code.
  *
  * @note This function returns an error code rather than a state component
  * delta (unlike the other `xkb_state_update_*` functions), in order to align
@@ -3375,7 +3376,7 @@ xkb_state_update_key(struct xkb_state *state, xkb_keycode_t key,
  * @sa `xkb_machine::xkb_machine_process_synthetic()`
  * @memberof xkb_state
  */
-XKB_EXPORT int
+XKB_EXPORT enum xkb_error_code
 xkb_state_update_synthetic(struct xkb_state *state,
                            const struct xkb_state_update *update,
                            enum xkb_state_component *changed);
