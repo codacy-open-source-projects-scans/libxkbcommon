@@ -45,6 +45,11 @@ extern "C" {
 /**
  * @file
  * Main libxkbcommon API.
+ *
+ * @brief Core API for keyboard keymap compilation and state processing.
+ *
+ * This header provides the primary public API for libxkbcommon. It exposes
+ * facilities for:
  */
 
 /**
@@ -112,9 +117,10 @@ struct xkb_machine;
  * Opaque keyboard state object.
  *
  * State objects contain the active state of a keyboard (or keyboards), such
- * as the currently effective layout and the active modifiers.  It acts as a
- * simple state machine, wherein key presses and releases are the input, and
- * key symbols (keysyms) are the output.
+ * as the currently effective layout and the active modifiers. Depending on
+ * the use case, the state can be driven by raw key events or updated from
+ * server serializations, and always exposes a query API for keysyms,
+ * modifiers, layout and LEDs.
  *
  * This object serves 3 roles:
  * <dl>
@@ -122,6 +128,9 @@ struct xkb_machine;
  * <dd>
  * Update the state from server serializations via `xkb_state_update_mask()`,
  * then query it (keysyms, modifiers, layout, LEDs).
+ *
+ * Use the constructor `xkb_state_new_with_mode()` with
+ * `::XKB_STATE_MODE_CLIENT`.
  *
  * See the [examples](@ref quick-guide-clients) in the quick guide.
  * </dd>
@@ -132,20 +141,30 @@ struct xkb_machine;
  * [Mealy machine] that processes keyboard input; `xkb_state` is its
  * *observable state*, exposing the query API.
  *
+ * Use the constructor `xkb_state_new_with_mode()` with
+ * `::XKB_STATE_MODE_SERVER_QUERY`.
+ *
  * See [examples](@ref quick-guide-wayland-server) in the quick guide.
  * </dd>
  * <dt>Legacy *server* API</dt>
  * <dd>
- * Update the state directly via `xkb_state_update_key()`, then query it.
+ * `xkb_state` is a [Mealy machine]<!-- -->: it is a finite-state machine that
+ * takes a stream of raw key events – a pair ([keycode], [direction]) – as input,
+ * and produces `xkb_state_component` delta with the previous state. Output
+ * depends on *both* the input and the current internal state (active modifiers,
+ * current layout, etc.).
+ *
+ * - Create it using the constructor `xkb_state_new_with_mode()` with
+ *   `::XKB_STATE_MODE_SERVER` or the legacy `xkb_state_new()`.
+ * - Update it via `xkb_state_update_key()` and `xkb_state_update_synthetic()`.
+ * - Query it directly via the API common to the client and companion use cases.
  *
  * @deprecated Since 1.14.0, prefer `xkb_machine` for new server
  * applications.
- * <!-- blank required by Doxygen -->
- *
  * </dd>
  * </dl>
  *
- * See @ref server-client-state for details.
+ * See @ref server-client-state and @ref xkb_state_mode for further details.
  *
  * [Mealy machine]: https://en.wikipedia.org/wiki/Mealy_machine
  */
@@ -2106,13 +2125,18 @@ xkb_keymap_key_repeats(struct xkb_keymap *keymap, xkb_keycode_t key);
  *
  * `xkb_machine` is a [Mealy machine]<!-- -->: it is a finite-state machine that takes a
  * stream of raw key events – a pair ([keycode], [direction]) – as input, and
- * produces a stream of atomic [XKB events](@ref xkb_event) as output. The
- * observable state of the machine is exposed via a companion `xkb_state`
- * object updated with `xkb_state::xkb_state_update_event()`.
+ * produces a stream of atomic [XKB events](@ref xkb_event) as output.
+ *
+ * The observable state of the machine is exposed via a companion `xkb_state`
+ * object:
+ * - Create it with `xkb_state::xkb_state_new_with_mode()` using
+ *   `::XKB_STATE_MODE_SERVER_QUERY`.
+ * - Update it with `xkb_state::xkb_state_update_event()`.
+ * - Query it (keysyms, modifiers, layout, LEDs) via the `xkb_state` query API.
  *
  * Note that the `xkb_machine` API supports events other than state
- * components changes, such as key press/release events, so that it enables to
- * handle most of the XKB [key actions](@ref key-action-def).
+ * components changes, such as key press/release events, so that it enables
+ * handling most of the XKB [key actions](@ref key-action-def).
  *
  * See the [example for a Wayland server](@ref quick-guide-wayland-server)
  * in the quick guide.
@@ -2124,9 +2148,30 @@ xkb_keymap_key_repeats(struct xkb_keymap *keymap, xkb_keycode_t key);
  * This is the API for **client** applications and the *legacy API* for
  * **server** applications.
  *
+ * <dl>
+ * <dt>*Client* applications</dt>
+ * <dd>
+ * Create the state object with `xkb_state::xkb_state_new_with_mode()` using
+ * `::XKB_STATE_MODE_CLIENT`, then update it via
+ * `xkb_state::xkb_state_update_mask()` from server serializations.
+ * </dd>
+ * <dt>*Server* applications not using `xkb_machine`</dt>
+ * <dd>
+ * Create the state object with `xkb_state::xkb_state_new_with_mode()` using
+ * `::XKB_STATE_MODE_SERVER`, or with the legacy
+ * `xkb_state::xkb_state_new()` constructor, then update it via
+ * `xkb_state::xkb_state_update_key()` for key events and
+ * `xkb_state::xkb_state_update_synthetic()` for out-of-band inputs such as
+ * layout switchers.
+ * </dd>
+ * </dl>
+ *
  * @warning Some entry points in the `xkb_state` API are only meant for servers
- * and some are only meant for clients, and the two should generally not be
- * mixed.
+ * and some are only meant for clients. Thus it is recommended to use
+ * `xkb_state::xkb_state_new_with_mode()` because it enforces correct usage at
+ * runtime and logs misuse as `::XKB_ERROR_UNEXPECTED_STATE_MODE`.
+ * Using `xkb_state::xkb_state_new()` does not enforce this: mixing entry
+ * points may lead to *incorrect state*.
  *
  * @note Since version 1.14.0, *server* applications should use the
  * `xkb_machine` API, which supports more features.
@@ -3244,11 +3289,106 @@ xkb_machine_process_synthetic(struct xkb_machine *machine,
                               struct xkb_events *events);
 
 /**
- * Create a new keyboard state object.
+ * @enum xkb_state_mode
+ * Mode for creating a [keyboard state object](@ref xkb_state).
+ *
+ * @since 1.14.0
+ * @sa `xkb_state::xkb_state_new_with_mode()`
+ */
+enum xkb_state_mode {
+    /**
+     * State driven by **serialized state updates** via
+     * `xkb_state::xkb_state_update_mask()`.
+     *
+     * Use this mode for *client* applications.
+     *
+     * This is the *recommended* mode for new client applications, as it creates
+     * `xkb_state` objects with much *smaller* memory footprint than with
+     * `xkb_state::xkb_state_new()`.
+     *
+     * @important `xkb_state` objects created with this mode cannot be used
+     * with the following API:
+     * - `xkb_state::xkb_state_update_event()`
+     * - `xkb_state::xkb_state_update_key()`
+     * - `xkb_state::xkb_state_update_synthetic()`
+     * - `xkb_state::xkb_state_update_latched_locked()` *(deprecated)*
+     *
+     * @since 1.14.0
+     */
+    XKB_STATE_MODE_CLIENT = 0,
+    /**
+     * State driven by <strong>[XKB events]</strong> via
+     * `xkb_state::xkb_state_update_event()`.
+     *
+     * Use this mode for an observable state companion to an `xkb_machine` in
+     * *server* applications using the `xkb_machine` API.
+     *
+     * This is the *recommended* mode for new server applications, as it creates
+     * `xkb_state` objects with much *smaller* memory footprint than with
+     * `xkb_state::xkb_state_new()`.
+     *
+     * @important `xkb_state` objects created with this mode cannot be used
+     * with the following API:
+     * - `xkb_state::xkb_state_update_mask()`
+     * - `xkb_state::xkb_state_update_key()`
+     * - `xkb_state::xkb_state_update_synthetic()`
+     * - `xkb_state::xkb_state_update_latched_locked()` *(deprecated)*
+     *
+     * @since 1.14.0
+     *
+     * [XKB events]: @ref xkb_event
+     */
+    XKB_STATE_MODE_SERVER_QUERY = 1,
+    /**
+     * State driven directly by **key events**, via
+     * `xkb_state::xkb_state_update_key()` or by *synthetic input events*, via
+     * `xkb_state::xkb_state_update_synthetic()`.
+     *
+     * Use this mode for *server* applications that do not use the preferred
+     * full-featured `xkb_machine` API.
+     *
+     * @important Contrary to `xkb_state::xkb_state_new()`, `xkb_state` objects
+     * created with this mode cannot be used with the following API:
+     * - `xkb_state::xkb_state_update_mask()`
+     * - `xkb_state::xkb_state_update_event()`
+     *
+     * @warning Prefer `xkb_machine` for new server applications.
+     * This mode exists for *compatibility* with code predating the
+     * `xkb_machine` API and may be deprecated in a future release.
+     *
+     * @since 1.14.0
+     */
+    XKB_STATE_MODE_SERVER = 2,
+};
+
+/**
+ * Create a new keyboard state object with an explicit mode.
  *
  * This entry point is intended for both server and client applications.
+ * It enables using the optimal implementation for the intended use.
  *
- * @param keymap The keymap which the state will use.
+ * @param[in] keymap The keymap which the state will use.
+ * @param[in] mode   The [state mode](@ref xkb_state_mode) to use.
+ *
+ * @returns A new keyboard state object, or `NULL` on failure.
+ *
+ * @since 1.14.0
+ * @sa `xkb_state_mode`
+ * @memberof xkb_state
+ */
+XKB_EXPORT struct xkb_state *
+xkb_state_new_with_mode(struct xkb_keymap *keymap, enum xkb_state_mode mode);
+
+/**
+ * Create a new keyboard state object.
+ *
+ * @note This is the legacy constructor, predating the `xkb_machine` API.
+ * It imposes no restrictions on which update functions may be called,
+ * making it easy to accidentally mix incompatible update paths. Prefer
+ * `xkb_state::xkb_state_new_with_mode()` for new code, which enforces
+ * correct API usage at runtime and optimal performance.
+ *
+ * @param[in] keymap The keymap which the state will use.
  *
  * @returns A new keyboard state object, or `NULL` on failure.
  *
@@ -3260,7 +3400,9 @@ xkb_state_new(struct xkb_keymap *keymap);
 /**
  * Take a new reference on a keyboard state object.
  *
- * @returns The passed in object.
+ * @param[in] state The [state](@ref xkb_state) to reference.
+ *
+ * @returns The passed-in object.
  *
  * @memberof xkb_state
  */
@@ -3270,7 +3412,7 @@ xkb_state_ref(struct xkb_state *state);
 /**
  * Release a reference on a keyboard state object, and possibly free it.
  *
- * @param state The state.  If it is `NULL`, this function does nothing.
+ * @param[in] state The state.  If it is `NULL`, this function does nothing.
  *
  * @memberof xkb_state
  */
@@ -3280,8 +3422,10 @@ xkb_state_unref(struct xkb_state *state);
 /**
  * Get the keymap which a keyboard state object is using.
  *
- * @returns The keymap which was passed to `xkb_state_new()` when creating
- * this state object.
+ * @param[in] state  The keyboard state object.
+ *
+ * @returns The keymap which was passed to `xkb_state_new()` or
+ * `xkb_state_new_with_mode()` when creating this state object.
  *
  * @warning This function does not take a new reference on the keymap; you must
  * explicitly reference it yourself if you plan to use it beyond the
@@ -3291,6 +3435,86 @@ xkb_state_unref(struct xkb_state *state);
  */
 XKB_EXPORT struct xkb_keymap *
 xkb_state_get_keymap(struct xkb_state *state);
+
+/**
+ * Update a keyboard state from a set of explicit masks.
+ *
+ * This entry point is intended for *client* applications; see @ref
+ * server-client-state for details. *Server* applications should use
+ * either the recommended modern `xkb_machine` API with the corresponding
+ * `xkb_state_update_event()` or the legacy `xkb_state_update_synthetic()`
+ * API instead.
+ *
+ * @param[in,out] state            The keyboard state object.
+ * @param[in]     depressed_mods   Modifiers to set as depressed.
+ * @param[in]     latched_mods     Modifiers to set as latched.
+ * @param[in]     locked_mods      Modifiers to set as locked.
+ * @param[in]     depressed_layout Layout to set as depressed.
+ * @param[in]     latched_layout   Layout to set as latched.
+ * @param[in]     locked_layout    Layout to set as locked.
+ *
+ * @pre *All* parameters must represent a *consistent* snapshot of the server
+ * keyboard state at a single point in time.  In case the server provides only a
+ * single layout state (e.g. the effective layout in the Wayland protocol), it
+ * should be used for @p locked_layout, while @p depressed_layout and
+ * @p latched_layout are both set to `0`.
+ *
+ * @important If @p state was not created with `::XKB_STATE_MODE_CLIENT` or
+ * `xkb_state_new()`, the call is *rejected* without updating the state,
+ * and the misuse is logged as `::XKB_ERROR_UNEXPECTED_STATE_MODE`.
+ * The return value is `0` in this case, which is indistinguishable from
+ * a no-op update.
+ *
+ * @returns A mask of state components that have changed as a result of
+ * the update.  If nothing in the state has changed, returns 0.
+ *
+ * @sa `xkb_state_component`
+ * @sa `xkb_state_update_synthetic()`
+ * @sa `xkb_state_update_event()`
+ *
+ * @memberof xkb_state
+ */
+XKB_EXPORT enum xkb_state_component
+xkb_state_update_mask(struct xkb_state *state,
+                      xkb_mod_mask_t depressed_mods,
+                      xkb_mod_mask_t latched_mods,
+                      xkb_mod_mask_t locked_mods,
+                      xkb_layout_index_t depressed_layout,
+                      xkb_layout_index_t latched_layout,
+                      xkb_layout_index_t locked_layout);
+
+/**
+ * Update the keyboard state [components](@ref xkb_state_component) from an
+ * [event](@ref xkb_event).
+ *
+ * This entry point is intended for *server* applications and should not be used
+ * by *client* applications; see @ref server-client-state for details.
+ *
+ * It enables server applications to use `xkb_state` as the observable state
+ * companion to an `xkb_machine`: feed each event produced by
+ * `xkb_machine::xkb_machine_process_key()` or
+ * `xkb_machine::xkb_machine_process_synthetic()` into this
+ * function to keep the observable state in sync.
+ *
+ * @param[in,out] state The keyboard state object.
+ * @param[in]     event The state event to update from.
+ *
+ * @important If @p state was not created with `::XKB_STATE_MODE_SERVER_QUERY`
+ * or `xkb_state_new()`, the call is *rejected* without updating the state,
+ * and the misuse is logged as `::XKB_ERROR_UNEXPECTED_STATE_MODE`.
+ * The return value is `0` in this case, which is indistinguishable from
+ * a no-op update.
+ *
+ * @returns A mask of state components that have changed as a result of
+ * the update.  If nothing in the state has changed, returns 0.
+ *
+ * @since 1.14.0
+ *
+ * @memberof xkb_state
+ */
+XKB_EXPORT enum xkb_state_component
+xkb_state_update_event(struct xkb_state *state,
+                       const struct xkb_event *event);
 
 /**
  * Update the keyboard state to reflect a given key being pressed or
@@ -3312,12 +3536,18 @@ xkb_state_get_keymap(struct xkb_state *state);
  * conventional behavior.
  *
  * @note This is the legacy server entry point and only supports a restricted
- * set of libxkbcommon features. Since 1.14.0, prefer `xkb_machine` for new
+ * set of libxkbcommon features.  Since 1.14.0, prefer `xkb_machine` for new
  * server applications to enable the full feature set.
  *
- * @param state     The keyboard state object.
- * @param key       The key being operated.
- * @param direction The direction of the key operation.
+ * @param[in,out] state     The keyboard state object.
+ * @param[in]     key       The key being operated.
+ * @param[in]     direction The direction of the key operation.
+ *
+ * @important If @p state was not created with `::XKB_STATE_MODE_SERVER` or
+ * `xkb_state_new()`, the call is *rejected* without updating the state,
+ * and the misuse is logged as `::XKB_ERROR_UNEXPECTED_STATE_MODE`.
+ * The return value is `0` in this case, which is indistinguishable from
+ * a no-op update.
  *
  * @returns A mask of state components that have changed as a result of
  * the update.  If nothing in the state has changed, returns 0.
@@ -3355,6 +3585,10 @@ xkb_state_update_key(struct xkb_state *state, xkb_keycode_t key,
  * out-of-range layout policy (see `xkb_layout_out_of_range_policy`).
  * @endparblock
  *
+ * @note This entry point serves the legacy server use case and only supports a
+ * restricted set of libxkbcommon features.  Since 1.14.0, prefer `xkb_machine`
+ * for new server applications to enable the full feature set.
+ *
  * @param[in,out] state   The keyboard state object.
  * @param[in]     update  The update to apply.
  *                        Must have `xkb_state_update::size` set.
@@ -3362,7 +3596,11 @@ xkb_state_update_key(struct xkb_state *state, xkb_keycode_t key,
  *                        have changed as a result of the update, or `NULL` to
  *                        ignore. Set to 0 if nothing in the state has changed.
  *
- * @returns `::XKB_SUCCESS` on success, otherwise an error code.
+ * @returns
+ * - `::XKB_SUCCESS` on success;
+ * - `::XKB_ERROR_UNEXPECTED_STATE_MODE` without updating the state if @p state
+ *   was not created with `::XKB_STATE_MODE_SERVER` or `xkb_state_new()`.
+ * - Otherwise another [error code](@ref xkb_error_code).
  *
  * @note This function returns an error code rather than a state component
  * delta (unlike the other `xkb_state_update_*` functions), in order to align
@@ -3382,38 +3620,10 @@ xkb_state_update_synthetic(struct xkb_state *state,
                            enum xkb_state_component *changed);
 
 /**
- * Update the keyboard state [components](@ref xkb_state_component) from an
- * [event](@ref xkb_event).
- *
- * This entry point is intended for *server* applications and should not be used
- * by *client* applications; see @ref server-client-state for details.
- *
- * It enables server applications to use `xkb_state` as the observable state
- * companion to an `xkb_machine`: feed each event produced by
- * `xkb_machine::xkb_machine_process_key()` or
- * `xkb_machine::xkb_machine_process_synthetic()` into this
- * function to keep the observable state in sync.
- *
- * @warning The given state object should not be updated by other means than
- * [events](@ref xkb_event), i.e. do not mix with `xkb_state_update_key()`.
- *
- * @param[in,out] state The keyboard state object.
- * @param[in]     event The state event to update from.
- *
- * @returns A mask of state components that have changed as a result of
- * the update.  If nothing in the state has changed, returns 0.
- *
- * @since 1.14.0
- *
- * @memberof xkb_state
- */
-XKB_EXPORT enum xkb_state_component
-xkb_state_update_event(struct xkb_state *state,
-                       const struct xkb_event *event);
-
-/**
  * Update the keyboard state to change the latched and locked state of
  * the modifiers and layout.
+ *
+ * @deprecated Use `xkb_state_update_synthetic()` instead.
  *
  * This entry point is intended for *server* applications and should not be used
  * by *client* applications; see @ref server-client-state for details.
@@ -3423,41 +3633,43 @@ xkb_state_update_event(struct xkb_state *state,
  *
  * @par Layout out of range
  * @parblock
- *
  * If the effective layout, after taking into account the depressed, latched and
  * locked layout, is out of range (negative or greater than the maximum layout),
  * it is brought into range. Currently, the layout is wrapped using integer
  * modulus (with negative values wrapping from the end). The wrapping behavior
  * can be configured using `xkb_state_update_synthetic()`.
- *
  * @endparblock
  *
- * @param state The keyboard state object.
- * @param affect_latched_mods See @p latched_mods.
- * @param latched_mods
+ * @param[in,out] state The keyboard state object.
+ * @param[in]     affect_latched_mods See @p latched_mods.
+ * @param[in]     latched_mods
  *     Modifiers to set as latched or unlatched. Only modifiers in
  *     @p affect_latched_mods are considered.
- * @param affect_latched_layout See @p latched_layout.
- * @param latched_layout
+ * @param[in]     affect_latched_layout See @p latched_layout.
+ * @param[in]     latched_layout
  *     Layout to latch. Only considered if @p affect_latched_layout is true.
  *     May be out of range (including negative) -- see note above.
- * @param affect_locked_mods See @p locked_mods.
- * @param locked_mods
+ * @param[in]     affect_locked_mods See @p locked_mods.
+ * @param[in]     locked_mods
  *     Modifiers to set as locked or unlocked. Only modifiers in
  *     @p affect_locked_mods are considered.
- * @param affect_locked_layout See @p locked_layout.
- * @param locked_layout
+ * @param[in]     affect_locked_layout See @p locked_layout.
+ * @param[in]     locked_layout
  *     Layout to lock. Only considered if @p affect_locked_layout is true.
  *     May be out of range (including negative) -- see note above.
+ *
+ * @important If @p state was not created with `::XKB_STATE_MODE_SERVER` or
+ * `xkb_state_new()`, the call is *rejected* without updating the state,
+ * and the misuse is logged as `::XKB_ERROR_UNEXPECTED_STATE_MODE`.
+ * The return value is `0` in this case, which is indistinguishable from
+ * a no-op update.
  *
  * @returns A mask of state components that have changed as a result of
  * the update.  If nothing in the state has changed, returns 0.
  *
- * @deprecated Use `xkb_state_update_synthetic()` instead.
- *
  * @memberof xkb_state
  *
- * @sa `xkb_state_update_mask()`
+ * @sa `xkb_state_update_synthetic()`
  */
 XKB_EXPORT enum xkb_state_component
 xkb_state_update_latched_locked(struct xkb_state *state,
@@ -3469,37 +3681,6 @@ xkb_state_update_latched_locked(struct xkb_state *state,
                                 xkb_mod_mask_t locked_mods,
                                 bool affect_locked_layout,
                                 int32_t locked_layout);
-
-/**
- * Update a keyboard state from a set of explicit masks.
- *
- * This entry point is intended for *client* applications; see @ref
- * server-client-state for details. *Server* applications should use
- * `xkb_state_update_key()` instead.
- *
- * All parameters must always be passed, or the resulting state may be
- * incoherent.
- *
- * @warning The serialization is lossy and will not survive round trips; it must
- * only be used to feed client state objects, and must not be used to update the
- * server state.
- *
- * @returns A mask of state components that have changed as a result of
- * the update.  If nothing in the state has changed, returns 0.
- *
- * @memberof xkb_state
- *
- * @sa `xkb_state_component`
- * @sa `xkb_state_update_key()`
- */
-XKB_EXPORT enum xkb_state_component
-xkb_state_update_mask(struct xkb_state *state,
-                      xkb_mod_mask_t depressed_mods,
-                      xkb_mod_mask_t latched_mods,
-                      xkb_mod_mask_t locked_mods,
-                      xkb_layout_index_t depressed_layout,
-                      xkb_layout_index_t latched_layout,
-                      xkb_layout_index_t locked_layout);
 
 /**
  * Get the keysyms obtained from pressing a particular key in a given
@@ -3566,6 +3747,9 @@ xkb_state_key_get_utf8(struct xkb_state *state, xkb_keycode_t key,
  * Get the Unicode/UTF-32 codepoint obtained from pressing a particular
  * key in a a given keyboard state.
  *
+ * @param[in]  state  The keyboard state object.
+ * @param[in]  key    The keycode of the key.
+ *
  * @returns The UTF-32 representation for the key, if it consists of only
  * a single codepoint.  Otherwise, returns 0.
  *
@@ -3587,6 +3771,9 @@ xkb_state_key_get_utf32(struct xkb_state *state, xkb_keycode_t key);
  * multiple keysyms are returned (in which case this function is
  * preferred).
  *
+ * @param[in]  state  The keyboard state object.
+ * @param[in]  key    The keycode of the key.
+ *
  * @returns The keysym.  If the key does not have exactly one keysym,
  * returns `XKB_KEY_NoSymbol`.
  *
@@ -3600,6 +3787,9 @@ xkb_state_key_get_one_sym(struct xkb_state *state, xkb_keycode_t key);
 
 /**
  * Get the effective layout index for a key in a given keyboard state.
+ *
+ * @param[in]  state  The keyboard state object.
+ * @param[in]  key    The keycode of the key.
  *
  * @returns The layout index for the key in the given keyboard state.  If
  * the given keycode is invalid, or if the key is not included in any
@@ -3619,9 +3809,9 @@ xkb_state_key_get_layout(struct xkb_state *state, xkb_keycode_t key);
  * Get the effective shift level for a key in a given keyboard state and
  * layout.
  *
- * @param state The keyboard state.
- * @param key The keycode of the key.
- * @param layout The layout for which to get the shift level.  This must be
+ * @param[in] state The keyboard state.
+ * @param[in] key The keycode of the key.
+ * @param[in] layout The layout for which to get the shift level.  This must be
  * smaller than:
  * @code xkb_keymap_num_layouts_for_key(keymap, key) @endcode
  * usually it would be:
@@ -3669,8 +3859,8 @@ enum xkb_state_match {
  * This entry point is intended for *server* applications; see @ref
  * server-client-state for details.
  *
- * @param state      The keyboard state.
- * @param components A mask of the keyboard control state components to
+ * @param[in] state      The keyboard state.
+ * @param[in] components A mask of the keyboard control state components to
  * serialize. State components other than `::XKB_STATE_CONTROLS` are ignored.
  *
  * @returns A `xkb_keyboard_control_flags` mask representing the enabled
@@ -3694,8 +3884,13 @@ xkb_state_serialize_enabled_controls(const struct xkb_state *state,
  * server-client-state for details. *Client* applications should use the
  * `xkb_state_mod_*_is_active` API.
  *
- * @param state      The keyboard state.
- * @param components A mask of the modifier state components to serialize.
+ * @warning The serialization is lossy and will not survive round trips.
+ * It must only be used to feed *client* state objects created with either
+ * `::XKB_STATE_MODE_CLIENT` or `xkb_state_new()`, and must not be used to
+ * update the *server* state.
+ *
+ * @param[in] state      The keyboard state.
+ * @param[in] components A mask of the modifier state components to serialize.
  * State components other than `XKB_STATE_MODS_*` are ignored.
  * If `::XKB_STATE_MODS_EFFECTIVE` is included, all other state components are
  * ignored.
@@ -3717,8 +3912,13 @@ xkb_state_serialize_mods(struct xkb_state *state,
  * server-client-state for details. *Client* applications should use the
  * xkb_state_layout_*_is_active API.
  *
- * @param state      The keyboard state.
- * @param components A mask of the layout state components to serialize.
+ * @warning The serialization is lossy and will not survive round trips.
+ * It must only be used to feed *client* state objects created with either
+ * `::XKB_STATE_MODE_CLIENT` or `xkb_state_new()`, and must not be used to
+ * update the *server* state.
+ *
+ * @param[in] state      The keyboard state.
+ * @param[in] components A mask of the layout state components to serialize.
  * State components other than `XKB_STATE_LAYOUT_*` are ignored.
  * If `::XKB_STATE_LAYOUT_EFFECTIVE` is included, all other state components are
  * ignored.
@@ -3737,6 +3937,11 @@ xkb_state_serialize_layout(struct xkb_state *state,
  *
  * @warning For [virtual modifiers], this function may *overmatch* in case
  * there are virtual modifiers with overlapping mappings to [real modifiers].
+ *
+ * @param[in]  state  The keyboard state object.
+ * @param[in]  name   The modifier name, as a `NULL`-terminated string.
+ * @param[in]  type   The component of the state against which to match the
+ * given modifiers.
  *
  * @returns 1 if the modifier is active, 0 if it is not.  If the modifier
  * name does not exist in the keymap, returns -1.
@@ -3760,12 +3965,12 @@ xkb_state_mod_name_is_active(struct xkb_state *state, const char *name,
  * @warning For [virtual modifiers], this function may *overmatch* in case
  * there are virtual modifiers with overlapping mappings to [real modifiers].
  *
- * @param state The keyboard state.
- * @param type  The component of the state against which to match the
+ * @param[in] state The keyboard state.
+ * @param[in] type  The component of the state against which to match the
  * given modifiers.
- * @param match The manner by which to match the state against the
+ * @param[in] match The manner by which to match the state against the
  * given modifiers.
- * @param ...   The set of of modifier names to test, terminated by a NULL
+ * @param[in] ...   The set of of modifier names to test, terminated by a `NULL`
  * argument (sentinel).
  *
  * @returns 1 if the modifiers are active, 0 if they are not.  If any of
@@ -3793,6 +3998,11 @@ xkb_state_mod_names_are_active(struct xkb_state *state,
  * @warning For [virtual modifiers], this function may *overmatch* in case
  * there are virtual modifiers with overlapping mappings to [real modifiers].
  *
+ * @param[in] state The keyboard state.
+ * @param[in] idx   The index of the modifier to test.
+ * @param[in] type  The component of the state against which to match the
+ * given modifiers.
+ *
  * @returns 1 if the modifier is active, 0 if it is not.  If the modifier
  * index is invalid in the keymap, returns -1.
  *
@@ -3815,12 +4025,12 @@ xkb_state_mod_index_is_active(struct xkb_state *state, xkb_mod_index_t idx,
  * @warning For [virtual modifiers], this function may *overmatch* in case
  * there are virtual modifiers with overlapping mappings to [real modifiers].
  *
- * @param state The keyboard state.
- * @param type  The component of the state against which to match the
+ * @param[in] state The keyboard state.
+ * @param[in] type  The component of the state against which to match the
  * given modifiers.
- * @param match The manner by which to match the state against the
+ * @param[in] match The manner by which to match the state against the
  * given modifiers.
- * @param ...   The set of of modifier indices to test, terminated by a
+ * @param[in] ...   The set of of modifier indices to test, terminated by a
  * `::XKB_MOD_INVALID` argument (sentinel).
  *
  * @returns 1 if the modifiers are active, 0 if they are not.  If any of
@@ -3949,9 +4159,10 @@ enum xkb_consumed_mode {
 /**
  * Get the mask of modifiers consumed by translating a given key.
  *
- * @param state The keyboard state.
- * @param key   The keycode of the key.
- * @param mode  The consumed modifiers mode to use; see enum description.
+ * @param[in] state The keyboard state.
+ * @param[in] key   The keycode of the key.
+ * @param[in] mode  The consumed modifiers mode to use;
+ *                  see [enum description](@ref xkb_consumed_mode).
  *
  * @returns a mask of the consumed [real modifiers] modifiers.
  *
@@ -3980,10 +4191,10 @@ xkb_state_key_get_consumed_mods(struct xkb_state *state, xkb_keycode_t key);
  * @warning For [virtual modifiers], this function may *overmatch* in case
  * there are virtual modifiers with overlapping mappings to [real modifiers].
  *
- * @param state The keyboard state.
- * @param key   The keycode of the key.
- * @param idx   The index of the modifier to check.
- * @param mode  The consumed modifiers mode to use; see enum description.
+ * @param[in] state The keyboard state.
+ * @param[in] key   The keycode of the key.
+ * @param[in] idx   The index of the modifier to check.
+ * @param[in] mode  The consumed modifiers mode to use; see enum description.
  *
  * @returns 1 if the modifier is consumed, 0 if it is not.  If the modifier
  * index is not valid in the keymap, returns -1.
@@ -4044,6 +4255,11 @@ xkb_state_mod_mask_remove_consumed(struct xkb_state *state, xkb_keycode_t key,
 /**
  * Test whether a layout is active in a given keyboard state by name.
  *
+ * @param[in] state The keyboard state.
+ * @param[in] name  The layout name to test (`NULL`-terminated string).
+ * @param[in] type  The component of the state against which to match the
+ * given layout.
+ *
  * @returns 1 if the layout is active, 0 if it is not.  If no layout with
  * this name exists in the keymap, return -1.
  *
@@ -4060,6 +4276,11 @@ xkb_state_layout_name_is_active(struct xkb_state *state, const char *name,
 /**
  * Test whether a layout is active in a given keyboard state by index.
  *
+ * @param[in] state The keyboard state.
+ * @param[in] name  The layout index to test.
+ * @param[in] type  The component of the state against which to match the
+ * given layout.
+ *
  * @returns 1 if the layout is active, 0 if it is not.  If the layout index
  * is not valid in the keymap, returns -1.
  *
@@ -4074,6 +4295,11 @@ xkb_state_layout_index_is_active(struct xkb_state *state,
 /**
  * Test whether a LED is active in a given keyboard state by name.
  *
+ * @param[in] state The keyboard state.
+ * @param[in] name  The LED name to test (`NULL`-terminated string).
+ * @param[in] type  The component of the state against which to match the
+ * given LED.
+ *
  * @returns 1 if the LED is active, 0 if it not.  If no LED with this name
  * exists in the keymap, returns -1.
  *
@@ -4085,6 +4311,11 @@ xkb_state_led_name_is_active(struct xkb_state *state, const char *name);
 
 /**
  * Test whether a LED is active in a given keyboard state by index.
+ *
+ * @param[in] state The keyboard state.
+ * @param[in] idx   The LED index to test.
+ * @param[in] type  The component of the state against which to match the
+ * given LED.
  *
  * @returns 1 if the LED is active, 0 if it not.  If the LED index is not
  * valid in the keymap, returns -1.

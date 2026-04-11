@@ -16,8 +16,13 @@ extern "C" {
 #endif
 
 /**
+ * @file
+ * @brief Error-handling related features
+ */
+
+/**
  * @defgroup error-api Error handling
- * Error-handling related features.
+ * Error-handling related features
  *
  * @{
  */
@@ -107,6 +112,12 @@ enum xkb_error_code {
      * @since 1.14.0
      */
     XKB_ERROR_UNSUPPORTED_A11Y_FLAGS = 371,
+    /**
+     * A `xkb_state` object has an unexpected `xkb_state_mode`
+     *
+     * @since 1.14.0
+     */
+    XKB_ERROR_UNEXPECTED_STATE_MODE = 399,
     /**
      * ABI struct size check failed
      *
