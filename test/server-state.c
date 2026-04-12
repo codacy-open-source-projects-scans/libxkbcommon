@@ -44,7 +44,7 @@ xkb_state_update_enabled_controls(struct xkb_state *state,
     };
     enum xkb_state_component changed = 0;
     /* Note: no error handling */
-    xkb_state_update_synthetic(state, &update, &changed);
+    assert(xkb_state_update_synthetic(state, &update, &changed) == XKB_SUCCESS);
     return changed;
 }
 
@@ -71,7 +71,7 @@ xkb_state_update_enabled_controls(struct xkb_state *state,
  *
  * [global keyboard controls]: @ref xkb_keyboard_control_flags
  */
-static int
+static enum xkb_error_code
 xkb_machine_update_enabled_controls(struct xkb_machine *machine,
                                     struct xkb_events *events,
                                     enum xkb_keyboard_control_flags affect,
@@ -133,7 +133,7 @@ xkb_machine_update_enabled_controls(struct xkb_machine *machine,
  *
  * @memberof xkb_machine
  */
-static int
+static enum xkb_error_code
 xkb_machine_update_latched_locked(struct xkb_machine *machine,
                                   struct xkb_events *events,
                                   xkb_mod_mask_t affect_latched_mods,
@@ -168,32 +168,37 @@ xkb_machine_update_latched_locked(struct xkb_machine *machine,
 }
 
 static void
-test_machine_options(struct xkb_context *ctx)
+test_machine_builder(struct xkb_context *ctx)
 {
-    struct xkb_machine_options *options = xkb_machine_options_new(ctx);
-    assert(options);
-
-    /* Invalid flags */
-    assert(xkb_machine_options_update_a11y_flags(options, -1000, 0) ==
-           XKB_ERROR_UNSUPPORTED_A11Y_FLAGS);
-    assert(xkb_machine_options_update_a11y_flags(options, 1000, 0) ==
-           XKB_ERROR_UNSUPPORTED_A11Y_FLAGS);
-
-    /* Valid flags */
-    static_assert(XKB_A11Y_NO_FLAGS == 0, "default flags");
-    assert(xkb_machine_options_update_a11y_flags(
-            options, XKB_A11Y_NO_FLAGS, 1000) == 0);
-
     struct xkb_keymap *keymap =
         xkb_keymap_new_from_names(ctx, NULL, TEST_KEYMAP_COMPILE_FLAGS);
     assert(keymap);
 
-    struct xkb_machine *sm = xkb_machine_new(keymap, options);
+    struct xkb_machine_builder *builder =
+        xkb_machine_builder_new(keymap, XKB_MACHINE_BUILDER_NO_FLAGS);
+    assert(builder);
+
+    /* Valid flags */
+    static_assert(XKB_A11Y_NO_FLAGS == 0, "default flags");
+    assert(xkb_machine_builder_update_a11y_flags(
+            builder, XKB_A11Y_NO_FLAGS, XKB_A11Y_NO_FLAGS) == XKB_SUCCESS);
+
+    /* Invalid flags */
+    assert(xkb_machine_builder_update_a11y_flags(builder, -1000, 0) ==
+           XKB_ERROR_UNSUPPORTED_A11Y_FLAGS);
+    assert(xkb_machine_builder_update_a11y_flags(builder, 0, -1000) ==
+           XKB_ERROR_UNSUPPORTED_A11Y_FLAGS);
+    assert(xkb_machine_builder_update_a11y_flags(builder, 1000, 0) ==
+           XKB_ERROR_UNSUPPORTED_A11Y_FLAGS);
+    assert(xkb_machine_builder_update_a11y_flags(builder, 0, 1000) ==
+           XKB_ERROR_UNSUPPORTED_A11Y_FLAGS);
+
+    struct xkb_machine *sm = xkb_machine_new(builder);
     assert(sm);
 
     xkb_machine_unref(sm);
+    xkb_machine_builder_destroy(builder);
     xkb_keymap_unref(keymap);
-    xkb_machine_options_destroy(options);
 }
 
 /* Check that derived state is correctly initialized */
@@ -206,12 +211,18 @@ test_initial_derived_values(struct xkb_context *ctx)
     );
     assert(keymap);
 
-    struct xkb_machine * const sm = xkb_machine_new(keymap, NULL);
+    struct xkb_machine_builder *builder =
+        xkb_machine_builder_new(keymap, XKB_MACHINE_BUILDER_NO_FLAGS);
+    assert(builder);
+
+    struct xkb_machine * const sm = xkb_machine_new(builder);
     assert(sm);
+
     struct xkb_state * const state = xkb_machine_get_state(sm);
     assert(xkb_state_led_name_is_active(state, XKB_LED_NAME_SCROLL));
 
     xkb_machine_unref(sm);
+    xkb_machine_builder_destroy(builder);
     xkb_keymap_unref(keymap);
 }
 
@@ -227,8 +238,11 @@ test_state_update(struct xkb_context *ctx)
 
     struct xkb_state * const state = xkb_state_new(keymap);
     assert(state);
-    struct xkb_machine * const sm = xkb_machine_new(keymap, NULL);
+    struct xkb_machine_builder *builder =
+        xkb_machine_builder_new(keymap, XKB_MACHINE_BUILDER_NO_FLAGS);
+    struct xkb_machine * const sm = xkb_machine_new(builder);
     assert(sm);
+    xkb_machine_builder_destroy(builder);
     struct xkb_events * const events = xkb_events_new_batch(ctx,
                                                             XKB_EVENTS_NO_FLAGS);
     assert(events);
@@ -491,8 +505,8 @@ update_controls(struct xkb_machine *sm,
 {
     if (use_machine) {
         assert(xkb_machine_update_enabled_controls(sm, events,
-                                                        affect, controls)
-               == 0);
+                                                   affect, controls)
+               == XKB_SUCCESS);
         const struct xkb_event *event;
         enum xkb_state_component changed = 0;
         while ((event = xkb_events_next(events))) {
@@ -522,8 +536,14 @@ test_group_wrap(struct xkb_context *ctx)
     const xkb_layout_index_t num_layouts = xkb_keymap_num_layouts(keymap);
     assert(num_layouts == 4);
 
-    struct xkb_machine * const sm = xkb_machine_new(keymap, NULL);
+    struct xkb_machine_builder *builder =
+        xkb_machine_builder_new(keymap, XKB_MACHINE_BUILDER_NO_FLAGS);
+    assert(builder);
+
+    struct xkb_machine * const sm = xkb_machine_new(builder);
     assert(sm);
+    xkb_machine_builder_destroy(builder);
+
     struct xkb_state * const state = xkb_state_new(keymap);
     assert(state);
 
@@ -603,7 +623,7 @@ test_group_wrap(struct xkb_context *ctx)
             .layout_policy = &layout_policy,
             .components = &components,
         };
-        assert(!xkb_machine_process_synthetic(sm, &req, events));
+        assert(xkb_machine_process_synthetic(sm, &req, events) == XKB_SUCCESS);
         while ((event = xkb_events_next(events)))
             xkb_state_update_event(state, event);
         assert_eq("unexpected effective group", tests[t].expected_group,
@@ -626,8 +646,12 @@ test_sticky_keys(struct xkb_context *ctx)
     );
     assert(keymap);
 
-    struct xkb_machine *sm = xkb_machine_new(keymap, NULL);
+    struct xkb_machine_builder *builder =
+        xkb_machine_builder_new(keymap, XKB_MACHINE_BUILDER_NO_FLAGS);
+    assert(builder);
+    struct xkb_machine *sm = xkb_machine_new(builder);
     assert(sm);
+    xkb_machine_builder_destroy(builder);
     struct xkb_events *events = xkb_events_new_batch(ctx, XKB_EVENTS_NO_FLAGS);
     assert(events);
     struct xkb_state *state = xkb_state_new(keymap);
@@ -880,15 +904,16 @@ test_sticky_keys(struct xkb_context *ctx)
      * Test latch-to-lock
      */
 
-    struct xkb_machine_options * const sm_options = xkb_machine_options_new(ctx);
-    assert(sm_options);
-    assert(xkb_machine_options_update_a11y_flags(
-                sm_options,
+    struct xkb_machine_builder * const sm_builder =
+        xkb_machine_builder_new(keymap, XKB_MACHINE_BUILDER_NO_FLAGS);
+    assert(sm_builder);
+    assert(xkb_machine_builder_update_a11y_flags(
+                sm_builder,
                 XKB_A11Y_LATCH_TO_LOCK,
-                XKB_A11Y_LATCH_TO_LOCK) == 0);
-    sm = xkb_machine_new(keymap, sm_options);
+                XKB_A11Y_LATCH_TO_LOCK) == XKB_SUCCESS);
+    sm = xkb_machine_new(sm_builder);
     assert(sm);
-    xkb_machine_options_destroy(sm_options);
+    xkb_machine_builder_destroy(sm_builder);
     events = xkb_events_new_batch(ctx, XKB_EVENTS_NO_FLAGS);
     assert(events);
     state = xkb_state_new(keymap);
@@ -954,8 +979,13 @@ test_redirect_key(struct xkb_context *ctx)
     );
     assert(keymap);
 
-    struct xkb_machine *sm = xkb_machine_new(keymap, NULL);
+    struct xkb_machine_builder *builder =
+        xkb_machine_builder_new(keymap, XKB_MACHINE_BUILDER_NO_FLAGS);
+    assert(builder);
+
+    struct xkb_machine *sm = xkb_machine_new(builder);
     assert(sm);
+    xkb_machine_builder_destroy(builder);
 
     static const xkb_mod_mask_t shift = UINT32_C(1) << XKB_MOD_INDEX_SHIFT;
     static const xkb_mod_mask_t ctrl = UINT32_C(1) << XKB_MOD_INDEX_CTRL;
@@ -1124,12 +1154,12 @@ test_redirect_key(struct xkb_context *ctx)
                 __func__, t, tests[t].keycode);
         assert(xkb_keymap_key_repeats(keymap, tests[t].keycode) ==
                tests[t].repeats);
-        assert(!xkb_machine_process_key(sm, tests[t].keycode,
-                                        XKB_KEY_DOWN, events));
+        assert(xkb_machine_process_key(sm, tests[t].keycode,
+                                       XKB_KEY_DOWN, events) == XKB_SUCCESS);
         assert(check_events(events, tests[t].down.events,
                             tests[t].down.events_count));
-        assert(!xkb_machine_process_key(sm, tests[t].keycode,
-                                        XKB_KEY_REPEATED, events));
+        assert(xkb_machine_process_key(sm, tests[t].keycode,
+                                       XKB_KEY_REPEATED, events) == XKB_SUCCESS);
         if (tests[t].repeats) {
             struct xkb_event ref[ARRAY_SIZE(tests->down.events)] = {0};
             memcpy(ref, tests[t].down.events, sizeof(tests->down.events));
@@ -1139,8 +1169,8 @@ test_redirect_key(struct xkb_context *ctx)
         } else {
             assert(check_events(events, NULL, 0));
         }
-        assert(!xkb_machine_process_key(sm, tests[t].keycode,
-                                        XKB_KEY_UP, events));
+        assert(xkb_machine_process_key(sm, tests[t].keycode,
+                                       XKB_KEY_UP, events) == XKB_SUCCESS);
         assert(check_events(events, tests[t].up.events,
                             tests[t].up.events_count));
     }
@@ -1164,15 +1194,15 @@ test_shortcuts_tweak(struct xkb_context *context)
     const xkb_mod_mask_t level3 = _xkb_keymap_mod_get_mask(keymap, XKB_VMOD_NAME_LEVEL3);
     const xkb_mod_mask_t level5 = _xkb_keymap_mod_get_mask(keymap, XKB_VMOD_NAME_LEVEL5);
 
-    struct xkb_machine_options * const options = xkb_machine_options_new(context);
-    assert(options);
+    struct xkb_machine_builder *builder =
+        xkb_machine_builder_new(keymap, XKB_MACHINE_BUILDER_NO_FLAGS);
+    assert(builder);
 
-    assert(xkb_machine_options_update_shortcut_mods(options, ctrl, ctrl)
-           == 0);
-    assert(xkb_machine_options_remap_shortcut_layout(options, 1, 2) == 0);
-    assert(xkb_machine_options_remap_shortcut_layout(options, 3, 0) == 0);
+    assert(xkb_machine_builder_update_shortcut_mods(builder, ctrl, ctrl) == XKB_SUCCESS);
+    assert(xkb_machine_builder_remap_shortcut_layout(builder, 1, 2) == XKB_SUCCESS);
+    assert(xkb_machine_builder_remap_shortcut_layout(builder, 3, 0) == XKB_SUCCESS);
 
-    struct xkb_machine * sm = xkb_machine_new(keymap, options);
+    struct xkb_machine * sm = xkb_machine_new(builder);
     assert(sm);
 
     struct xkb_events * const events = xkb_events_new_batch(context,
@@ -1665,7 +1695,7 @@ test_shortcuts_tweak(struct xkb_context *context)
     /* Layout 1 locked, Ctrl latched */
     assert(xkb_machine_update_latched_locked(sm, events,
                                              ctrl, ctrl, false, 0,
-                                             0, 0, true, 1) == 0);
+                                             0, 0, true, 1) == XKB_SUCCESS);
     check_events_(
         events,
         {
@@ -1689,7 +1719,7 @@ test_shortcuts_tweak(struct xkb_context *context)
     /* Layout 1 locked, Ctrl locked */
     assert(xkb_machine_update_latched_locked(sm, events,
                                              ctrl, 0, false, 0,
-                                             ctrl, ctrl, false, 0) == 0);
+                                             ctrl, ctrl, false, 0) == XKB_SUCCESS);
     check_events_(
         events,
         {
@@ -1845,7 +1875,7 @@ test_shortcuts_tweak(struct xkb_context *context)
     /* Layout 1 latched, layout 2 locked, Ctrl locked */
     assert(xkb_machine_update_latched_locked(sm, events,
                                              0, 0, true, 1,
-                                             0, 0, true, 2) == 0);
+                                             0, 0, true, 2) == XKB_SUCCESS);
     check_events_(
         events,
         {
@@ -1870,7 +1900,7 @@ test_shortcuts_tweak(struct xkb_context *context)
     /* Layout 1 latched, layout 2 locked, Ctrl disabled */
     assert(xkb_machine_update_latched_locked(sm, events,
                                              0, 0, false, 0,
-                                             ctrl, 0, false, 0) == 0);
+                                             ctrl, 0, false, 0) == XKB_SUCCESS);
     check_events_(
         events,
         {
@@ -1894,7 +1924,7 @@ test_shortcuts_tweak(struct xkb_context *context)
     /* Layout 1 latched, layout 2 locked, Ctrl latched */
     assert(xkb_machine_update_latched_locked(sm, events,
                                              ctrl, ctrl, false, 0,
-                                             0, 0, false, 0) == 0);
+                                             0, 0, false, 0) == XKB_SUCCESS);
     check_events_(
         events,
         {
@@ -1923,11 +1953,13 @@ test_shortcuts_tweak(struct xkb_context *context)
         XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS;
 
     /* Disable already disabled sticky keys: no change */
-    assert(xkb_machine_update_enabled_controls(sm, events, controls, 0) == 0);
+    assert(xkb_machine_update_enabled_controls(sm, events, controls, 0)
+           == XKB_SUCCESS);
     check_events_(events, { .type = XKB_EVENT_TYPE_NONE });
 
     /* Enable disabled sticky keys: no change */
-    assert(xkb_machine_update_enabled_controls(sm, events, controls, controls) == 0);
+    assert(xkb_machine_update_enabled_controls(sm, events, controls, controls)
+           == XKB_SUCCESS);
     check_events_(
         events,
         {
@@ -1950,11 +1982,13 @@ test_shortcuts_tweak(struct xkb_context *context)
     );
 
     /* Enable already enabled sticky keys: no change */
-    assert(xkb_machine_update_enabled_controls(sm, events, controls, controls) == 0);
+    assert(xkb_machine_update_enabled_controls(sm, events, controls, controls)
+           == XKB_SUCCESS);
     check_events_(events, { .type = XKB_EVENT_TYPE_NONE });
 
     /* Disable sticky keys: clear latches & locks */
-    assert(xkb_machine_update_enabled_controls(sm, events, controls, 0) == 0);
+    assert(xkb_machine_update_enabled_controls(sm, events, controls, 0)
+           == XKB_SUCCESS);
     check_events_(
         events,
         {
@@ -1979,7 +2013,8 @@ test_shortcuts_tweak(struct xkb_context *context)
         }
     );
 
-    assert(xkb_machine_update_enabled_controls(sm, events, controls, 0) == 0);
+    assert(xkb_machine_update_enabled_controls(sm, events, controls, 0)
+           == XKB_SUCCESS);
 
     /*
      * Check RedirectKey()
@@ -1988,7 +2023,7 @@ test_shortcuts_tweak(struct xkb_context *context)
     /* Layout 4 locked, Ctrl locked */
     assert(xkb_machine_update_latched_locked(sm, events,
                                              0, 0, false, 0,
-                                             ctrl, ctrl, true, 3) == 0);
+                                             ctrl, ctrl, true, 3) == XKB_SUCCESS);
     check_events_(
         events,
         {
@@ -2093,15 +2128,15 @@ test_shortcuts_tweak(struct xkb_context *context)
      * Use modifiers tweak in addition to the shortcuts tweak
      */
 
-    assert(!xkb_machine_options_remap_mods(options,
-                                          ctrl | alt, level3));
+    assert(xkb_machine_builder_remap_mods(builder, ctrl | alt, level3) ==
+           XKB_SUCCESS);
 
-    sm = xkb_machine_new(keymap, options);
+    sm = xkb_machine_new(builder);
     assert(sm);
 
     assert(xkb_machine_update_latched_locked(sm, events,
                                              0, 0, false, 0,
-                                             ctrl, ctrl, true, 3) == 0);
+                                             ctrl, ctrl, true, 3) == XKB_SUCCESS);
 
     assert(xkb_machine_process_key(sm, KEY_Q + EVDEV_OFFSET,
                                    XKB_KEY_DOWN, events) == 0);
@@ -2225,7 +2260,7 @@ test_shortcuts_tweak(struct xkb_context *context)
 
     assert(xkb_machine_update_latched_locked(sm, events,
                                              0, 0, false, 0,
-                                             alt, alt, false, 0) == 0);
+                                             alt, alt, false, 0) == XKB_SUCCESS);
 
     check_events_(
         events,
@@ -2295,7 +2330,7 @@ test_shortcuts_tweak(struct xkb_context *context)
 
     assert(xkb_machine_update_latched_locked(sm, events,
                                              0, 0, false, 0,
-                                             0, 0, true, 0) == 0);
+                                             0, 0, true, 0) == XKB_SUCCESS);
 
     assert(xkb_machine_process_key(sm, KEY_Q + EVDEV_OFFSET,
                                    XKB_KEY_DOWN, events) == 0);
@@ -2387,7 +2422,7 @@ test_shortcuts_tweak(struct xkb_context *context)
 
     xkb_machine_unref(sm);
     xkb_events_destroy(events);
-    xkb_machine_options_destroy(options);
+    xkb_machine_builder_destroy(builder);
     xkb_keymap_unref(keymap);
 }
 
@@ -2424,8 +2459,12 @@ test_overlays(struct xkb_context *context)
         GOLDEN_TESTS_OUTPUTS "overlays-v2-2.xkb");
     assert(keymap);
 
-    struct xkb_machine * const sm = xkb_machine_new(keymap, NULL);
+    struct xkb_machine_builder *builder =
+        xkb_machine_builder_new(keymap, XKB_MACHINE_BUILDER_NO_FLAGS);
+    assert(builder);
+    struct xkb_machine * const sm = xkb_machine_new(builder);
     assert(sm);
+    xkb_machine_builder_destroy(builder);
     struct xkb_events * events = xkb_events_new_batch(context,
                                                       XKB_EVENTS_NO_FLAGS);
     assert(events);
@@ -2515,16 +2554,16 @@ test_overlays(struct xkb_context *context)
 
     for (size_t t = 0; t < ARRAY_SIZE(keycode_tests); t++) {
         fprintf(stderr, "------\n*** %s: keycodes #%zu ***\n", __func__, t);
-        assert(!xkb_machine_update_enabled_controls(
+        assert(xkb_machine_update_enabled_controls(
                 sm, events, 0xffff, keycode_tests[t].controls
-        ));
+        ) == XKB_SUCCESS);
 
         if (!keycode_tests[t].kc)
             continue;
 
-        assert(!xkb_machine_process_key(
+        assert(xkb_machine_process_key(
             sm, EVDEV_OFFSET + KEY_J, keycode_tests[t].direction, events
-        ));
+        ) == XKB_SUCCESS);
         const struct xkb_event *event;
         while ((event = xkb_events_next(events))) {
             switch (xkb_event_get_type(event)) {
@@ -2563,23 +2602,24 @@ test_modifiers_tweak(struct xkb_context *context)
     const xkb_mod_mask_t level5 = _xkb_keymap_mod_get_mask(keymap, XKB_VMOD_NAME_LEVEL5);
     const xkb_mod_mask_t num = _xkb_keymap_mod_get_mask(keymap, XKB_VMOD_NAME_NUM);
 
-    struct xkb_machine_options * const options = xkb_machine_options_new(context);
-    assert(options);
+    struct xkb_machine_builder *builder =
+        xkb_machine_builder_new(keymap, XKB_MACHINE_BUILDER_NO_FLAGS);
+    assert(builder);
 
-    assert(!xkb_machine_options_remap_mods(options, 0, 0));
-    assert(xkb_machine_options_remap_mods(options, 0, level3) ==
+    assert(xkb_machine_builder_remap_mods(builder, 0, 0) == XKB_SUCCESS);
+    assert(xkb_machine_builder_remap_mods(builder, 0, level3) ==
            XKB_ERROR_UNSUPPORTED_MODIFIER_MASK);
-    assert(!xkb_machine_options_remap_mods(options, scroll, alt));
-    assert(!xkb_machine_options_remap_mods(options, super, level3));
-    assert(!xkb_machine_options_remap_mods(options, alt, level5));
-    assert(!xkb_machine_options_remap_mods(options, ctrl | alt, level3));
+    assert(xkb_machine_builder_remap_mods(builder, scroll, alt) == XKB_SUCCESS);
+    assert(xkb_machine_builder_remap_mods(builder, super, level3) == XKB_SUCCESS);
+    assert(xkb_machine_builder_remap_mods(builder, alt, level5) == XKB_SUCCESS);
+    assert(xkb_machine_builder_remap_mods(builder, ctrl | alt, level3) == XKB_SUCCESS);
 
-    assert(!xkb_machine_options_remap_mods(options, ctrl, shift));
-    assert(!xkb_machine_options_remap_mods(options, ctrl, 0));
+    assert(xkb_machine_builder_remap_mods(builder, ctrl, shift) == XKB_SUCCESS);
+    assert(xkb_machine_builder_remap_mods(builder, ctrl, 0) == XKB_SUCCESS);
 
-    struct xkb_machine * const sm = xkb_machine_new(keymap, options);
+    struct xkb_machine * const sm = xkb_machine_new(builder);
     assert(sm);
-    xkb_machine_options_destroy(options);
+    xkb_machine_builder_destroy(builder);
 
     struct xkb_events * const events = xkb_events_new_batch(context,
                                                             XKB_EVENTS_NO_FLAGS);
@@ -2787,7 +2827,7 @@ test_modifiers_tweak(struct xkb_context *context)
     assert(xkb_machine_update_latched_locked(sm, events,
                                              0, 0, false, 0,
                                              ctrl | num, ctrl | num,
-                                             false, 0) == 0);
+                                             false, 0) == XKB_SUCCESS);
     check_events_(
         events,
         {
@@ -2956,7 +2996,7 @@ test_modifiers_tweak(struct xkb_context *context)
     assert(xkb_machine_update_latched_locked(sm, events,
                                              0, 0, false, 0,
                                              ctrl | scroll, scroll,
-                                             false, 0) == 0);
+                                             false, 0) == XKB_SUCCESS);
     check_events_(
         events,
         {
@@ -3035,7 +3075,7 @@ test_modifiers_tweak(struct xkb_context *context)
     assert(xkb_machine_update_latched_locked(sm, events,
                                              0, 0, false, 0,
                                              ctrl | alt | scroll, ctrl | alt,
-                                             false, 0) == 0);
+                                             false, 0) == XKB_SUCCESS);
 
     /* Key redirect */
     assert(xkb_machine_process_key(sm, KEY_C + EVDEV_OFFSET, XKB_KEY_DOWN,
@@ -3261,10 +3301,10 @@ main(void)
     xkb_keymap_unref(NULL);
     xkb_state_unref(NULL);
     xkb_machine_unref(NULL);
-    xkb_machine_options_destroy(NULL);
+    xkb_machine_builder_destroy(NULL);
     xkb_events_destroy(NULL);
 
-    test_machine_options(context);
+    test_machine_builder(context);
     test_initial_derived_values(context);
 
     assert(!xkb_events_new_batch(context, -1));
