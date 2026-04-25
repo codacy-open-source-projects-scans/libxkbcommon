@@ -5,7 +5,14 @@ using a new mechanism: the XKB **extensions directories**. It provides a proper
 way for keyboard layout packages to install their files, which otherwise resorted
 to hacking the xkeyboard-config system directory.
 
-@note For *single-user* setups, see also @ref user-configuration "".
+@note
+See also the following alternatives without packaging:
+<dl>
+<dt>*Single-user* setups</dt>
+<dd>@ref user-configuration ""</dd>
+<dt>*System-wide* setups</dt>
+<dd>@ref system-configuration ""</dd>
+</dl>
 
 @tableofcontents{html:2}
 
@@ -102,7 +109,7 @@ In this example:
    <dt><code>PACKAGE_NAME</code></dt>
    <dd>A *unique* identifier, typically the layout or package name.</dd>
    <dt><code>KCCGST_DIR</code></dt>
-   <dd>A XKB [KcCGST] component directory, such as `symbols`, `types`, etc.</dd>
+   <dd>An XKB [KcCGST] component directory, such as `symbols`, `types`, etc.</dd>
    </dl>
 
    @note If a custom *rules* file is required (e.g. to add an *option*), name it

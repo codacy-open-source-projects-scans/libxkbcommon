@@ -68,7 +68,7 @@ Layout database path is *hard-coded* in xserver.
 Multiple layout database paths can be used simultaneously, enabling user-space
 configuration.
 
-See @ref user-configuration "" for further information.
+See @ref custom-option "" for further information.
 </details>
 </td>
 </tr>
@@ -180,7 +180,7 @@ Real and virtual modifiers have been collapsed into the same namespace, with a
 “significant” flag that largely parallels the core/virtual split.
 
 Real modifiers are predefined modifiers with fixed encoding and considered merely
-as a X11 compatibility feature.
+as an X11 compatibility feature.
 </details>
 </td>
 </tr>
