@@ -50,13 +50,13 @@ xkb_keymap_new(struct xkb_context *ctx, const char *func,
                enum xkb_keymap_format format,
                enum xkb_keymap_compile_flags flags)
 {
-    static const enum xkb_keymap_compile_flags XKB_KEYMAP_COMPILE_FLAGS =
-        (enum xkb_keymap_compile_flags) XKB_KEYMAP_COMPILE_FLAGS_VALUES;
-
-    if (flags & ~XKB_KEYMAP_COMPILE_FLAGS) {
+    const enum xkb_keymap_compile_flags invalid_flags = (
+        flags & ~(enum xkb_keymap_compile_flags)XKB_KEYMAP_COMPILE_FLAGS_VALUES
+    );
+    if (invalid_flags) {
         log_err(ctx, XKB_LOG_MESSAGE_NO_ID,
-                "%s: unrecognized keymap compilation flags: 0x%x\n", func,
-                (flags & ~XKB_KEYMAP_COMPILE_FLAGS));
+                "%s: unrecognized keymap compilation flags: 0x%x\n",
+                func, invalid_flags);
         return NULL;
     }
 
@@ -168,7 +168,7 @@ action_equal(const union xkb_action *a, const union xkb_action *b)
                 a->ctrls.ctrls == b->ctrls.ctrls);
     case ACTION_TYPE_REDIRECT_KEY:
         return (a->redirect.keycode == b->redirect.keycode &&
-                a->redirect.affect == b->redirect.affect &&
+                a->redirect.affect_mods == b->redirect.affect_mods &&
                 a->redirect.mods == b->redirect.mods);
     case ACTION_TYPE_UNSUPPORTED_LEGACY:
     case ACTION_TYPE_UNKNOWN:
@@ -254,7 +254,7 @@ XkbWrapGroupIntoRange(int32_t group,
 }
 
 xkb_action_count_t
-xkb_keymap_key_get_actions_by_level(struct xkb_keymap *keymap,
+xkb_keymap_key_get_actions_by_level(const struct xkb_keymap *keymap,
                                     const struct xkb_key *key,
                                     xkb_layout_index_t layout,
                                     xkb_level_index_t level,
@@ -263,9 +263,7 @@ xkb_keymap_key_get_actions_by_level(struct xkb_keymap *keymap,
     if (!key)
         goto err;
 
-    layout = XkbWrapGroupIntoRange((int32_t) layout, key->num_groups,
-                                   key->out_of_range_group_policy,
-                                   key->out_of_range_group_number);
+    layout = xkb_keymap_key_effective_layout(key, layout);
     if (layout == XKB_LAYOUT_INVALID)
         goto err;
 

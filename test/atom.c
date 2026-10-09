@@ -10,6 +10,7 @@
 
 #include "test.h"
 #include "atom.h"
+#include "util-random.h"
 
 #define INTERN_LITERAL(table, literal) \
     atom_intern(table, literal, sizeof(literal) - 1, true)
@@ -28,14 +29,14 @@ random_string(char **str_out, size_t *len_out)
     size_t len;
     char *str;
 
-    len = rand() % 15;
+    len = random() % 15;
     str = malloc(len + 1);
     assert(str);
 
     for (size_t i = 0; i < len; i++)
-        str[i] = random_chars[rand() % ARRAY_SIZE(random_chars)];
+        str[i] = random_chars[random() % ARRAY_SIZE(random_chars)];
     /* Don't always terminate it; should work without. */
-    if (rand() % 2 == 0)
+    if (random() % 2 == 0)
         str[len] = '\0';
 
     *str_out = str;
@@ -60,7 +61,7 @@ test_random_strings(void)
     table = atom_table_new();
     assert(table);
 
-    N = 1 + rand() % 100000;
+    N = 1 + (int)random() % 100000;
     arr = calloc(N, sizeof(*arr));
     assert(arr);
 
@@ -143,12 +144,19 @@ main(int argc, char *argv[])
     /* Initialize pseudo-random generator with program arg or current time */
     unsigned int seed;
     if (argc >= 2 && !streq(argv[1], "-")) {
-        seed = (unsigned int) atoi(argv[1]);
+        char *endp = argv[1];
+        errno = 0;
+        const unsigned long raw = strtoul(argv[1], &endp, 10);
+        if (errno || endp == argv[1] || *endp != '\0' || raw > UINT_MAX) {
+            fprintf(stderr, "ERROR: Invalid seed: \"%s\"\n", argv[1]);
+            exit(TEST_SETUP_FAILURE);
+        }
+        seed = (unsigned int) raw;
     } else {
         seed = (unsigned int) time(NULL);
     }
     fprintf(stderr, "Seed for the pseudo-random generator: %u\n", seed);
-    srand(seed);
+    srandom(seed);
 
     table = atom_table_new();
     assert(table);

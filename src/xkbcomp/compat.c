@@ -466,12 +466,17 @@ HandleIncludeCompatMap(CompatInfo *info, IncludeStmt *include)
                    &info->mods);
     included.name = steal(&include->stmt);
 
+    const struct parser_keymap_config config = {
+        .format = info->keymap_info->keymap.format,
+        .strict = info->keymap_info->strict
+    };
+
     for (IncludeStmt *stmt = include; stmt; stmt = stmt->next_incl) {
         CompatInfo next_incl;
         XkbFile *file;
 
         char path[PATH_MAX];
-        file = ProcessIncludeFile(info->ctx, stmt, FILE_TYPE_COMPAT,
+        file = ProcessIncludeFile(info->ctx, &config, stmt, FILE_TYPE_COMPAT,
                                   path, sizeof(path));
         if (!file) {
             info->errorCount += 10;
@@ -768,8 +773,9 @@ HandleGlobalVar(CompatInfo *info, VarDef *stmt)
     ExprDef *ndx;
     bool ret;
 
-    if (!ExprResolveLhs(info->ctx, stmt->name, &elem, &field, &ndx))
+    if (!ExprResolveLhs(info->ctx, stmt->name, &elem, &field, &ndx)) {
         ret = false;
+    }
     else if (elem && istreq(elem, "interpret")) {
         SymInterpInfo temp = {0};
         InitInterp(&temp);
@@ -797,7 +803,8 @@ HandleGlobalVar(CompatInfo *info, VarDef *stmt)
                                      &info->mods, elem, field, ndx,
                                      &stmt->value, stmt->merge) !=
                PARSER_FATAL_ERROR);
-    } else {
+    }
+    else {
         log_err(info->ctx, XKB_ERROR_UNKNOWN_DEFAULT_FIELD,
                 "Default defined for unknown field \"%s\"; Ignored\n", field);
         return !(info->keymap_info->strict &
@@ -952,7 +959,7 @@ HandleCompatMapFile(CompatInfo *info, XkbFile *file)
         if (info->errorCount > 10) {
             log_err(info->ctx, XKB_LOG_MESSAGE_NO_ID,
                     "Abandoning compatibility map \"%s\"\n",
-                    safe_map_name(file));
+                    safe_map_name(file->name));
             break;
         }
     }

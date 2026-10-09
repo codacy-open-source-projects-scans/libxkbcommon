@@ -21,12 +21,18 @@ This requires an X server to be running.
 This is a debugging tool, its behavior or output is not guaranteed to be stable.
 .
 .Bl -tag -width Ds
+.It Fl h, \-help
+Print help and exit
+.
+.It Fl V, \-version
+Print version information and exit
+.
+.It Fl \-verbose
+Enable verbose debugging output.
+.
 .It Fl \-format Ar keymap_format
 Specify the keymap format (numeric or label, e.g.\&
 .Dq v1 )
-.
-.It Fl \-strict
-Parse using the strict mode.
 .
 .It Fl \-no\-pretty
 Disable pretty-printing for keymap serialization.
@@ -34,18 +40,10 @@ Disable pretty-printing for keymap serialization.
 .It Fl \-drop\-unused
 Disable unused bits serialization.
 .
-.It Fl \-explicit\-values
-Force serializing all values.
-.
-.It Fl \-help
-Print help and exit
-.
-.It Fl \-verbose
-Enable verbose debugging output
 .El
 .
 .Sh SEE ALSO
 .Xr xkbcli 1 ,
 .Xr xkbcli\-interactive\-x11 1 ,
 .Xr xkbcli\-dump\-keymap\-wayland 1 ,
-.Lk https://xkbcommon.org "The libxkbcommon online documentation"
+.Lk https://xkbcommon.org "The xkbcommon online documentation"

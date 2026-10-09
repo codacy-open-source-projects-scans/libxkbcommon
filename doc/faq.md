@@ -16,12 +16,12 @@ See: [terminology](./keymap-text-format-v1-v2.md#terminology).
 
 <dl>
 <dt>Features</dt>
-<dd>See @ref xkbcommon-compatibility "".</dd>
+<dd>See @ref xkb-compatibility "".</dd>
 <dt>Tools</dt>
 <dd>See @ref legacy-x-tools-replacement "".</dd>
 </dl>
 
-## Keyboard layouts
+## Keyboard layouts {#faq-keyboard-layouts}
 
 ### Is there a quick guide?
 
@@ -76,7 +76,7 @@ See @ref packaging-keyboard-layouts.
 There are some issues with *modifier-only* shortcuts: see [this bug report][#420].
 
 This can be fixed by using the new parameter <code>[lockOnRelease]</code> in
-`LockGroup()`, available since libxkbcommon 1.11. This will be done at some
+`LockGroup()`, available since xkbcommon 1.11. This will be done at some
 point in [xkeyboard-config].
 
 ```diff
@@ -100,7 +100,7 @@ for other configurations. These fallbacks may not match users’ expectations no
 even be consistent across applications. See @ref the-keyboard-shortcuts-mess ""
 for some examples.
 
-Since version 1.14, libxkbcommon offers a [dedicated API][shortcuts-api]
+Since version 1.14, xkbcommon offers a [dedicated API][shortcuts-api]
 for *Wayland* compositors, which enables to customize the layouts to use for
 keyboard shortcuts.
 
@@ -122,7 +122,7 @@ to encourage developers to implement the relevant [API][shortcuts-api].
 </dd>
 </dl>
 
-[shortcuts-api]: @ref xkb_machine_builder::xkb_machine_builder_remap_shortcut_layout
+[shortcuts-api]: @ref xkb_machine_builder::xkb_machine_builder_update_shortcut_override
 [keycodes]: @ref keycode-def
 [keysyms]: @ref keysym-def
 
@@ -140,7 +140,7 @@ keyboard models in the XKB configuration to avoid vendor-specific mappings.
 </dd>
 <dt>There is an issue with your keyboard layout database</dt>
 <dd>
-libxkbcommon may not be able to load your configuration due to an issue
+xkbcommon may not be able to load your configuration due to an issue
 (file not found, syntax error, unsupported keysym, etc.). Please use our
 [debugging tools] to get further information.
 
@@ -162,11 +162,11 @@ further information.
 Please use our [debugging tools] to ensure that it is specific to the
 application.
 </dd>
-<dt>Your keyboard layout uses features not supported by libxkbcommon</dt>
+<dt>Your keyboard layout uses features not supported by xkbcommon</dt>
 <dd>See: [compatibility](./compatibility.md)</dd>
 <dt>None of the previous</dt>
 <dd>
-If none of the previous is conclusive, then this may an issue with libxkbcommon.
+If none of the previous is conclusive, then this may an issue with xkbcommon.
 Please use our [debugging tools] to provide the maximum information (setup,
 log, expected/got results) and file a [bug report]!
 </dd>
@@ -175,6 +175,11 @@ log, expected/got results) and file a [bug report]!
 [debugging tools]: ./debugging.md
 [xkeyboard-config]: https://gitlab.freedesktop.org/xkeyboard-config/xkeyboard-config
 [bug report]: https://github.com/xkbcommon/libxkbcommon/issues/new
+
+### What are the `[XKB-nnn]` numbers in the log?
+
+They correspond to the *error identifiers*. See the [error index](@ref error-index) for
+the documentation of each error.
 
 ### How do I swap some keys?
 
@@ -498,7 +503,7 @@ xkbcli interactive-x11
 </dd>
 </dl>
 
-## API
+## API {#faq-api}
 
 ### Modifiers
 
@@ -508,12 +513,12 @@ The [virtual modifiers] encoding, (also: mappings to [real modifiers] in X11
 jargon) is an implementation detail.
 However, some applications may require it in order to interface with legacy code.
 
-##### libxkbcommon ≥ 1.10
+##### xkbcommon ≥ 1.10
 
 Use the dedicated functions `xkb_keymap::xkb_keymap_mod_get_mask()` (since 1.10)
 and `xkb_keymap::xkb_keymap_mod_get_mask2()` (since 1.11).
 
-##### libxkbcommon ≤ 1.9
+##### xkbcommon ≤ 1.9
 
 Use the following snippet:
 
@@ -539,7 +544,15 @@ xkb_state_unref(state);
 There is no dedicated API, since the use cases are too diverse or niche.
 Nevertheless, the following snippet provide a minimal example to achieve it.
 
-@snippet "test/modifiers.c" xkb_keymap_mod_get_codes
+@snippet{trimleft} "test/modifiers.c" xkb_keymap_mod_get_codes
+
+#### How to use Windows-style `AltGr`, i.e. remap `Control+Alt` to `LevelThree`?
+
+@figure@figcaption
+Remap `Control+Alt` to `LevelThree`.
+@endfigcaption
+@snippet{trimleft} "test/server-state.c" xkb_machine_builder_mods_remap_update_example
+@endfigure
 
 #### How to use keyboard shortcuts from a different layout?
 
@@ -568,34 +581,11 @@ achievable with modern XKB features (e.g. multiple actions per level), this is
 non-trivial and it does not scale well, thus preventing support in the standard
 keyboard database, [xkeyboard-config].
 
-##### Custom and consistent shortcuts behavior using libxkbcommon
+##### Custom and consistent shortcuts behavior using xkbcommon
 
-Since libxkbcommon 1.14, tweaking the keyboard shortcuts can be achieved by using
-the following functions from the `xkb_machine` API:
+Since xkbcommon 1.14, tweaking the keyboard shortcuts can be achieved by using
+`xkb_machine_builder::xkb_machine_builder_update_shortcut_override()`.
 
-<dl>
-<dt>
-`xkb_machine_builder::xkb_machine_builder_update_shortcut_mods()`
-</dt>
-<dd>
-Set the modifiers that will trigger the shortcuts tweak, typically
-`Control+Alt+Super`.
-
-```c
-const xkb_mod_mask_t ctrl = xkb_keymap_mod_get_mask(keymap, XKB_MOD_NAME_CTRL);
-const xkb_mod_mask_t alt = xkb_keymap_mod_get_mask(keymap, XKB_VMOD_NAME_ALT);
-const xkb_mod_mask_t super = xkb_keymap_mod_get_mask(keymap, XKB_VMOD_NAME_SUPER);
-const xkb_mod_mask_t shortcuts_mask = ctrl | alt | super;
-if (xkb_machine_builder_update_shortcut_mods(options, shortcuts_mask, shortcuts_mask)) {
-    /* handle error */
-    …
-}
-```
-</dd>
-<dt>
-`xkb_machine_builder::xkb_machine_builder_remap_shortcut_layout()`
-</dt>
-<dd>
 Set the layout to use for shortcuts for each relevant layout. There are 2 typical
 use cases:
 
@@ -604,34 +594,27 @@ use cases:
 <dd>
 The user types with a single layout, but want the shortcuts to act as if using
 another layout: e.g. Qwerty shortcuts for the Arabic layout. The keymap would
-be configured with *2* layouts: the user layout then the shortcut layout (e.g.
-`ara,us`).
+actually be configured with *2* layouts: the user layout then the shortcut layout
+(e.g. `ara,us`).
 
-```c
-if (xkb_machine_builder_remap_shortcut_layout(options, 0, 1)) {
-    /* handle error */
-    …
-}
-```
+@figure@figcaption
+Example: substitute layout #0 with layout #1 when any of the modifiers
+`Control`, `Alt` and `Super` triggers shortcut overrides.
+@endfigcaption
+@snippet{trimleft} "test/server-state.c" shortcut_layout_update_example_1
+@endfigure
 </dd>
 <dt>*Multiple* layouts</dt>
 <dd>
-The user types with multiples layouts but wants shortcuts consistency accross
+The user types with multiple layouts but wants shortcuts consistency across
 all the layouts, typically using the first layout as the reference.
 
-```c
-// When using shortcuts, all layouts will behave as if using the *first* layout.
-const xkb_layout_index_t num_layouts = xkb_keymap_num_layouts(keymap);
-for (xkb_layout_index_t source = 1; source < num_layouts; source++) {
-    if (xkb_machine_builder_remap_shortcut_layout(options, source, 0)) {
-        /* handle error */
-        …
-    }
-}
-```
-</dd>
-</dl>
-
+@figure@figcaption
+Example: all layouts will behave as if using the *first* layout any of the
+modifiers `Control`, `Alt` and `Super` triggers shortcut overrides.
+@endfigcaption
+@snippet{trimleft} "test/server-state.c" shortcut_layout_update_example_2
+@endfigure
 </dd>
 </dl>
 
@@ -659,5 +642,59 @@ either not defined or unbound:
 if (xkb_keymap_num_layouts_for_key(keymap, keycode))
     // use bound key ...
 ```
+</dd>
+</dl>
+
+### Layouts
+
+#### How to handle more than 4 layouts?
+
+##### Parsing
+
+Creating a keymap with more than 4 layouts requires using the [keymap format v2].
+
+[keymap format v2]: @ref xkb_keymap_format::XKB_KEYMAP_FORMAT_TEXT_V2
+
+##### Serialiazing
+
+Serialiazing a keymap with more than 4 layouts may be achieved by:
+
+<dl>
+<dt>*Lossless* serialization</dt>
+<dd>Serialize all the layouts using the [keymap format v2].</dd>
+<dt>*Lossy* serialization</dt>
+<dd>
+Serialize a *subset* of the layouts using `xkb_keymap::xkb_keymap_serialize()`.
+The target keymap format depends on the use case.
+
+@figure
+@figcaption
+Example of an X11-compatible serialization of a **8**-layout keymap:
+only layouts indices **3 to 6** are serialized.
+@endfigcaption
+
+```c
+const struct xkb_keymap_serialize_config config = {
+    .size = sizeof(config),
+    /* X11 compatibility */
+    .format = XKB_KEYMAP_FORMAT_TEXT_V1,
+    /* X11 compatibility: 4 layouts (max supported by X11), indices 3-6 (0-indexed) */
+    .layouts = 0x78
+};
+
+struct xkb_keymap_serialize_result result = { .size = sizeof(result) };
+
+const xkb_status status = xkb_keymap_serialize(keymap, &config, &result);
+if (status == XKB_SUCCESS) {
+    // send result.serialized
+    …
+} else {
+    // handle error
+    …
+}
+
+free(result.serialized);
+```
+@endfigure
 </dd>
 </dl>

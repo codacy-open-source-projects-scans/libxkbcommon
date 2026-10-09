@@ -8,50 +8,15 @@
 
 #include <locale.h>
 
-#include "test.h"
 #include "context.h"
+#include "darray.h"
+#include "log.h"
 #include "messages-codes.h"
+#include "test.h"
 
 #ifdef __GNUC__
 #pragma GCC diagnostic ignored "-Wmissing-format-attribute"
 #endif
-
-static const char *
-log_level_to_string(enum xkb_log_level level)
-{
-    switch (level) {
-    case XKB_LOG_LEVEL_CRITICAL:
-        return "critical";
-    case XKB_LOG_LEVEL_ERROR:
-        return "error";
-    case XKB_LOG_LEVEL_WARNING:
-        return "warning";
-    case XKB_LOG_LEVEL_INFO:
-        return "info";
-    case XKB_LOG_LEVEL_DEBUG:
-        return "debug";
-    }
-
-    return "unknown";
-}
-
-ATTR_PRINTF(3, 0) static void
-log_fn(struct xkb_context *ctx, enum xkb_log_level level,
-       const char *fmt, va_list args)
-{
-    char *s;
-    int size;
-    darray_char *ls = xkb_context_get_user_data(ctx);
-    assert(ls);
-
-    size = vasprintf(&s, fmt, args);
-    assert(size != -1);
-
-    darray_append_string(*ls, log_level_to_string(level));
-    darray_append_lit(*ls, ": ");
-    darray_append_string(*ls, s);
-    free(s);
-}
 
 static void
 test_basic(void)
@@ -195,10 +160,20 @@ test_keymaps(void)
                 "warning: [XKB-107] (input string):11:15: unrecognized keysym \"invalidKeysym\"\n"
                 "warning: [XKB-489] (input string):14:26: numeric keysym \"0x0030\" (48)\n"
                 "warning: [XKB-301] (input string):14:32: deprecated keysym \"leftshoe\".\n"
-                "warning: [XKB-433] No map in include statement, but \"(input string)\" contains several; Using first defined map, \"(unnamed map)\"\n"
                 "warning: [XKB-523] Alias of <1> for <> declared more than once; First definition ignored\n"
                 "warning: [XKB-286] The type \"TWO_LEVEL\" for key '<>' group 1 was not previously defined; Using the default type\n"
                 "warning: [XKB-516] Type \"ONE_LEVEL\" has 1 levels, but <> has 2 levels; Ignoring extra symbols\n",
+            .error = false
+        },
+        /* Deprecated */
+        {
+            .input =
+                "default deprecated xkb_keymap {\n"
+                "  xkb_symbols {};\n"
+                "  deprecated xkb_types {};\n"
+                "};",
+            .log =
+                "warning: [XKB-021] (input string):3:26: deprecated section: \"(unnamed map)\"\n",
             .error = false
         },
         /* Invalid action fields */
@@ -314,10 +289,11 @@ test_keymaps(void)
         assert_printf(streq_not_null(darray_items(log_string), keymaps[k].log),
                       "Expected:\n%s\nGot:\n%s\n",
                       keymaps[k].log, darray_items(log_string));
-        darray_free(log_string);
+        darray_size(log_string) = 0;
     }
 
     xkb_context_unref(ctx);
+    darray_free(log_string);
 }
 
 static void
@@ -422,10 +398,11 @@ test_compose(void)
         assert_printf(streq_null(darray_items(log_string), composes[k].log),
                       "Expected:\n%s\nGot:\n%s\n",
                       darray_items(log_string), composes[k].log);
-        darray_free(log_string);
+        darray_size(log_string) = 0;
     }
 
     xkb_context_unref(ctx);
+    darray_free(log_string);
 }
 
 int

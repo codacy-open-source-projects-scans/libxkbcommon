@@ -103,11 +103,11 @@ enum xkb_feature {
      */
     XKB_FEATURE_ENUM_FEATURE = 1,
     /**
-     * The enumeration @ref xkb_error_code
+     * The enumeration @ref xkb_status
      *
      * @since 1.14.0
      */
-    XKB_FEATURE_ENUM_ERROR_CODE = 1000,
+    XKB_FEATURE_ENUM_STATUS = 1000,
     /**
      * The enumeration @ref xkb_context_flags
      *
@@ -205,6 +205,12 @@ enum xkb_feature {
      */
     XKB_FEATURE_ENUM_MACHINE_BUILDER_FLAGS = 25200,
     /**
+     * The enumeration @ref xkb_machine_flags
+     *
+     * @since 1.14.0
+     */
+    XKB_FEATURE_ENUM_MACHINE_FLAGS = 26200,
+    /**
      * The enumeration @ref xkb_event_type
      *
      * @since 1.14.0
@@ -216,6 +222,18 @@ enum xkb_feature {
      * @since 1.14.0
      */
     XKB_FEATURE_ENUM_KEY_DIRECTION = 27020,
+    /**
+     * The enumeration @ref xkb_pointer_motion_flags
+     *
+     * @since 1.14.0
+     */
+    XKB_FEATURE_ENUM_POINTER_MOTION_FLAGS = 27040,
+    /**
+     * The enumeration @ref xkb_pointer_button_state
+     *
+     * @since 1.14.0
+     */
+    XKB_FEATURE_ENUM_POINTER_BUTTON_STATE = 27041,
     /**
      * The enumeration @ref xkb_events_flags
      *

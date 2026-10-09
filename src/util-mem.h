@@ -8,10 +8,19 @@
 #include "config.h"
 
 #include <assert.h>
-#include <stdlib.h>
+#include <stdalign.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
 
-#include "xkbcommon/xkbcommon-errors.h"
+#if !HAVE_MAX_ALIGN_T
+/* Fallback for legacy compilers or older C modes on MSVC */
+typedef struct {
+    long long __max_align_ll;
+    long double __max_align_ld;
+} max_align_t;
+#endif
 
 static inline void*
 _steal(void *ptr) {
@@ -32,49 +41,36 @@ _steal(void *ptr) {
     (__typeof__(*(ptr_)))_steal(ptr_)
 #endif
 
-/**
- * Check the size field of a versioned struct for forward-compatibility.
- *
- * @param v1_size      Size of the first version of the struct. A caller_size
- *                     below this indicates a buggy or uninitialized size field.
- * @param min_size     Size of the oldest version still acceptable to this call.
- *                     A caller_size below this triggers backward-compat error.
- * @param lib_size     sizeof() of the struct as known by the library.
- * @param caller_size  The size field provided by the caller.
- * @param caller_data  Pointer to the start of the struct.
- *
- * @returns `::XKB_SUCCESS` if the struct is valid and safe to use, otherwise
- * an error code indicating the kind of ABI violation.
- */
-static inline enum xkb_error_code
-xkb_check_versioned_struct_size_(size_t v1_size, size_t min_size,
-                                 size_t lib_size, size_t caller_size,
-                                 const void *caller_data)
+#define XKB_POINTER_TAG_BITS  2
+#define XKB_POINTER_TAG_MASK  ((uintptr_t)((1u << XKB_POINTER_TAG_BITS) - 1u))
+
+static_assert(alignof(max_align_t) >= 4,
+              "Pointer alignment insufficient for tagging");
+
+/** Pack @p ptr and a 0-3 @p tag. */
+static inline const void *
+xkb_pointer_tag(const void *ptr, uintptr_t tag)
 {
-    assert(v1_size <= min_size);
-    assert(min_size <= lib_size);
-
-    if (caller_size < v1_size)
-        return XKB_ERROR_ABI_INVALID_STRUCT_SIZE;
-
-    if (caller_size < min_size)
-        return XKB_ERROR_ABI_BACKWARD_COMPAT;
-
-    if (caller_size <= lib_size)
-        /* Caller has older or same struct — safe, missing fields default to 0 */
-        return XKB_SUCCESS;
-
-    /* Caller has newer struct — only safe if unknown trailing bytes are zero */
-    const unsigned char *p = (const unsigned char *)caller_data + lib_size;
-    const unsigned char *end = (const unsigned char *)caller_data + caller_size;
-
-    while (p < end) {
-        if (*(p++) != 0)
-            return XKB_ERROR_ABI_FORWARD_COMPAT;
-    }
-
-    return XKB_SUCCESS;
+    uintptr_t addr = (uintptr_t)ptr;
+    assert(tag <= XKB_POINTER_TAG_MASK &&
+           "tag exceeds available bits");
+    assert((addr & XKB_POINTER_TAG_MASK) == 0 &&
+           "pointer not sufficiently aligned for tagging");
+    /* NOLINTNEXTLINE(performance-no-int-to-ptr) */
+    return (const void *)(addr | tag);
 }
 
-#define xkb_check_versioned_struct_size(v1_size, min_size, x) \
-    xkb_check_versioned_struct_size_(v1_size, min_size, sizeof(*(x)), (x)->size, x)
+/** Recover the original pointer from a tagged pointer. */
+static inline const void *
+xkb_pointer_untag(const void *ptr)
+{
+    /* NOLINTNEXTLINE(performance-no-int-to-ptr) */
+    return (const void *)((uintptr_t)ptr & ~XKB_POINTER_TAG_MASK);
+}
+
+/* Recover just the tag bits from a tagged pointer. */
+static inline uintptr_t
+xkb_pointer_get_tag(const void *ptr)
+{
+    return ((uintptr_t)ptr & XKB_POINTER_TAG_MASK);
+}

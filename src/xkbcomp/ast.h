@@ -264,7 +264,7 @@ typedef struct {
     ParseCommon common;
     enum merge_mode merge;
     // NOTE: Can also be “None”, rather than a modifier name.
-    xkb_atom_t modifier;
+    ExprDef *modifiers;
     ExprDef *keys;
 } ModMapDef;
 
@@ -304,6 +304,7 @@ typedef struct {
 } UnknownStatement;
 
 enum xkb_map_flags {
+    MAP_NO_FLAG = 0,
     MAP_IS_DEFAULT = (1 << 0),
     MAP_IS_PARTIAL = (1 << 1),
     MAP_IS_HIDDEN = (1 << 2),
@@ -312,6 +313,7 @@ enum xkb_map_flags {
     MAP_HAS_KEYPAD = (1 << 5),
     MAP_HAS_FN = (1 << 6),
     MAP_IS_ALTGR = (1 << 7),
+    MAP_IS_DEPRECATED = (1 << 8),
 };
 
 typedef struct {

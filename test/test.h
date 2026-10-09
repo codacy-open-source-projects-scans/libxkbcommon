@@ -31,6 +31,10 @@
        assert(__cond);                                     \
     }} while (0)
 
+#define assert_streq(test_name, expected, got) \
+    assert_printf(streq_null(expected, got), \
+                  test_name ". Expected \"%s\", got: \"%s\"\n", expected, got)
+
 #define assert_streq_not_null(test_name, expected, got) \
     assert_printf(streq_not_null(expected, got), \
                   test_name ". Expected \"%s\", got: \"%s\"\n", expected, got)
@@ -40,7 +44,7 @@
                   test_name ". Expected " format ", got: " format "\n", \
                   ##__VA_ARGS__, expected, got)
 
-/* Enable to test assertion failures */
+/* Enable testing assertion failures */
 #if defined(__unix__) || defined(__APPLE__)
     #include <sys/wait.h>
     #include <sys/mman.h>
@@ -95,6 +99,12 @@
 #define TEST_KEYMAP_SERIALIZE_FLAGS (    \
     XKB_KEYMAP_SERIALIZE_PRETTY |        \
     XKB_KEYMAP_SERIALIZE_KEEP_UNUSED     \
+)
+
+#define TEST_KEYMAP_SERIALIZE_EXPLICIT (           \
+    XKB_KEYMAP_SERIALIZE_EXPLICIT_DEFAULT_VALUES | \
+    XKB_KEYMAP_SERIALIZE_EXPLICIT_VMODS |          \
+    XKB_KEYMAP_SERIALIZE_EXPLICIT_KEY_VALUES       \
 )
 
 void

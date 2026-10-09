@@ -9,10 +9,13 @@
 #include "test-config.h"
 
 #include <assert.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "xkbcommon/xkbcommon.h"
+#include "xkbcommon/xkbcommon-status.h"
 #include "xkbcommon/xkbcommon-keysyms.h"
 #include "evdev-scancodes.h"
 #include "test.h"
@@ -23,6 +26,8 @@
 
 #define KEY_LVL3 84
 #define KEY_LVL5 195
+
+#define GOLDEN_TESTS_OUTPUTS "keymaps/"
 
 static void
 test_supported_formats(void)
@@ -99,6 +104,269 @@ test_supported_formats(void)
 
         previous = formats[k];
     }
+}
+
+static void
+test_xkb_key(void)
+{
+    struct xkb_context *context = test_get_context(CONTEXT_NO_FLAG);
+    assert(context);
+
+    static_assert(XKB_KEYCODE_MAX_CONTIGUOUS == 0xfff, "Out-of-sync");
+    static const struct {
+        const char *keymap;
+        struct {
+            xkb_keycode_t target;
+            xkb_keycode_t exact;
+            xkb_keycode_t ascending;
+            xkb_keycode_t descending;
+        } keycodes[10];
+    } tests[] = {
+        {
+            .keymap = "xkb_keymap {};",
+            /* FIXME: seems silly to allocate 256 keycodes for an empty keymap! */
+            .keycodes = {
+                {
+                    .target = 0 /* min */,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = XKB_KEYCODE_INVALID,
+                    .descending = XKB_KEYCODE_INVALID,
+                },
+                {
+                    .target = 3,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = XKB_KEYCODE_INVALID,
+                    .descending = XKB_KEYCODE_INVALID,
+                },
+                {
+                    .target = 254,
+                    .exact = 254,
+                    .ascending = XKB_KEYCODE_INVALID,
+                    .descending = XKB_KEYCODE_INVALID,
+                },
+                {
+                    .target = 256,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = XKB_KEYCODE_INVALID,
+                    .descending = XKB_KEYCODE_INVALID,
+                },
+                {
+                    .target = XKB_KEYCODE_MAX_CONTIGUOUS,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = XKB_KEYCODE_INVALID,
+                    .descending = XKB_KEYCODE_INVALID,
+                },
+                {
+                    .target = XKB_KEYCODE_MAX_CONTIGUOUS + 1,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = XKB_KEYCODE_INVALID,
+                    .descending = XKB_KEYCODE_INVALID,
+                },
+                {
+                    .target = 0x2000,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = XKB_KEYCODE_INVALID,
+                    .descending = XKB_KEYCODE_INVALID,
+                },
+                {
+                    .target = 0x4000,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = XKB_KEYCODE_INVALID,
+                    .descending = XKB_KEYCODE_INVALID,
+                },
+                {
+                    .target = XKB_KEYCODE_MAX,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = XKB_KEYCODE_INVALID,
+                    .descending = XKB_KEYCODE_INVALID,
+                },
+                {
+                    .target = XKB_KEYCODE_INVALID,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = XKB_KEYCODE_INVALID,
+                    .descending = XKB_KEYCODE_INVALID,
+                },
+            },
+        },
+        {
+            .keymap =
+                "xkb_keymap {\n"
+                "  xkb_keycodes {\n"
+                "    <4> = 4;\n"
+                "    <2> = 2;\n"
+                "    <9> = 9;\n"
+                "  };\n"
+                "};",
+            .keycodes = {
+                {
+                    .target = 0 /* min */,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = 2,
+                    .descending = 2,
+                },
+                {
+                    .target = 2,
+                    .exact = 2,
+                    .ascending = 2,
+                    .descending = 2,
+                },
+                {
+                    .target = 3,
+                    .exact = 3,
+                    .ascending = 4,
+                    .descending = 2,
+                },
+                {
+                    .target = XKB_KEYCODE_MAX_CONTIGUOUS - 1,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = 9,
+                    .descending = 9,
+                },
+                {
+                    .target = XKB_KEYCODE_MAX_CONTIGUOUS,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = 9,
+                    .descending = 9,
+                },
+                {
+                    .target = XKB_KEYCODE_MAX_CONTIGUOUS + 1,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = 9,
+                    .descending = 9,
+                },
+                {
+                    .target = 0x2000,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = 9,
+                    .descending = 9,
+                },
+                {
+                    .target = 0x4000,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = 9,
+                    .descending = 9,
+                },
+                {
+                    .target = XKB_KEYCODE_MAX,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = 9,
+                    .descending = 9,
+                },
+                {
+                    .target = XKB_KEYCODE_INVALID,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = XKB_KEYCODE_INVALID,
+                    .descending = XKB_KEYCODE_INVALID,
+                },
+            },
+        },
+        {
+            .keymap =
+                "xkb_keymap {\n"
+                "  xkb_keycodes {\n"
+                "    <0x4000> = 0x4000;\n"
+                "    <0x2000> = 0x2000;\n"
+                "    <0x9000> = 0x9000;\n"
+                "  };\n"
+                "};",
+            .keycodes = {
+                {
+                    .target = 0 /* min */,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = 0x2000,
+                    .descending = 0x2000,
+                },
+                {
+                    .target = XKB_KEYCODE_MAX_CONTIGUOUS - 1,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = 0x2000,
+                    .descending = 0x2000,
+                },
+                {
+                    .target = XKB_KEYCODE_MAX_CONTIGUOUS,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = 0x2000,
+                    .descending = 0x2000,
+                },
+                {
+                    .target = XKB_KEYCODE_MAX_CONTIGUOUS + 1,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = 0x2000,
+                    .descending = 0x2000,
+                },
+                {
+                    .target = 0x2000,
+                    .exact = 0x2000,
+                    .ascending = 0x2000,
+                    .descending = 0x2000,
+                },
+                {
+                    .target = 0x3000,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = 0x4000,
+                    .descending = 0x2000,
+                },
+                {
+                    .target = 0x4000,
+                    .exact = 0x4000,
+                    .ascending = 0x4000,
+                    .descending = 0x4000,
+                },
+                {
+                    .target = 0x10000,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = 0x9000,
+                    .descending = 0x9000,
+                },
+                {
+                    .target = XKB_KEYCODE_MAX,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = 0x9000,
+                    .descending = 0x9000,
+                },
+                {
+                    .target = XKB_KEYCODE_INVALID,
+                    .exact = XKB_KEYCODE_INVALID,
+                    .ascending = XKB_KEYCODE_INVALID,
+                    .descending = XKB_KEYCODE_INVALID,
+                },
+            },
+        },
+    };
+
+    for (size_t t = 0; t < ARRAY_SIZE(tests); t++) {
+        struct xkb_keymap *keymap = test_compile_string(
+            context, XKB_KEYMAP_FORMAT_TEXT_V1, tests[t].keymap
+        );
+        assert(keymap);
+
+        for (size_t k = 0; k < ARRAY_SIZE(tests[t].keycodes); k++) {
+            const xkb_keycode_t target = tests[t].keycodes[k].target;
+            fprintf(stderr,
+                    "------\n*** %s: #%zu, key count: %"PRIu32", "
+                    "target: #%zu (0x%"PRIx32") ***\n",
+                    __func__, t, keymap->num_keys, k, target);
+            const struct xkb_key *key;
+            xkb_keycode_t expected;
+            xkb_keycode_t got;
+            key = XkbKey(keymap, target);
+            got = key ? key->keycode : XKB_KEYCODE_INVALID;
+            expected = tests[t].keycodes[k].exact;
+            assert_eq("exact", expected, got, "0x%"PRIx32);
+            key = xkb_keymap_get_next_defined_key(keymap, true, target);
+            got = key ? key->keycode : XKB_KEYCODE_INVALID;
+            expected = tests[t].keycodes[k].ascending;
+            assert_eq("ascending", expected, got, "0x%"PRIx32);
+            key = xkb_keymap_get_next_defined_key(keymap, false, target);
+            got = key ? key->keycode : XKB_KEYCODE_INVALID;
+            expected = tests[t].keycodes[k].descending;
+            assert_eq("descending", expected, got, "0x%"PRIx32);
+        }
+
+        xkb_keymap_unref(keymap);
+    }
+
+    xkb_context_unref(context);
 }
 
 static void
@@ -729,6 +997,51 @@ test_key_iterator(void)
     struct xkb_context *context = test_get_context(CONTEXT_NO_FLAG);
     assert(context);
 
+    struct xkb_keymap *keymap = test_compile_string(
+        context, XKB_KEYMAP_FORMAT_TEXT_V1, "xkb_keymap {};"
+    );
+
+    // NOLINTBEGIN(clang-analyzer-deadcode.DeadStores)
+    // NOLINTBEGIN(readability-redundant-nested-if)
+    // NOLINTBEGIN(readability-trivial-switch)
+    //! [xkb_keymap_key_iterator_init_example]
+    enum xkb_status status;
+    struct xkb_keymap_key_iterator_config config = {
+        .size = sizeof(config),
+        .flags = XKB_KEYMAP_KEY_ITERATOR_NO_FLAGS,
+    };
+    struct xkb_keymap_key_iterator iter;
+    status = xkb_keymap_key_iterator_init(&iter, keymap, &config);
+    switch(status) {
+    case XKB_SUCCESS:
+        break;
+    // handle errors
+    // ...
+    default:
+        exit(EXIT_FAILURE);
+    }
+    xkb_keycode_t kc;
+    while ((kc = xkb_keymap_key_iterator_next(&iter)) != XKB_KEYCODE_INVALID) {
+        // ...
+    }
+    //! [xkb_keymap_key_iterator_init_example]
+    // NOLINTEND(readability-trivial-switch)
+    // NOLINTEND(readability-redundant-nested-if)
+    // NOLINTEND(clang-analyzer-deadcode.DeadStores)
+
+    /* Reject invalid flags */
+    config.flags = UINT32_MAX;
+    assert(xkb_keymap_key_iterator_init(&iter, keymap, &config) ==
+           XKB_ERROR_UNSUPPORTED_KEY_ITERATOR_FLAGS);
+    /* Reject invalid keycode */
+    config.flags = 0;
+    config.start = XKB_KEYCODE_INVALID;
+    assert(xkb_keymap_key_iterator_init(&iter, keymap, &config) ==
+           XKB_ERROR_INVALID_KEYCODE);
+
+    xkb_keymap_unref(keymap);
+
+    static_assert(XKB_KEYCODE_MAX_CONTIGUOUS == 0xfff, "Out-of-sync");
     static const xkb_keycode_t test0_all[] = {1, 2, 9};
     static const xkb_keycode_t test0_bound[] = {2, 9};
     static const xkb_keycode_t test1_all[] = {0x1000, 0x2000, 0x9000};
@@ -736,13 +1049,33 @@ test_key_iterator(void)
     static const xkb_keycode_t test2_all[] = {9, 0x1000, 0x2000};
     static const xkb_keycode_t test2_bound[] = {9, 0x2000};
 
+    enum { ITER_DEFAULT_START, ITER_EXPLICIT_START, _NUM_ITER_START_TYPES };
+    enum { ITER_ASCENDING, ITER_DESCENDING, _NUM_ITER_DIRECTIONS };
+    enum { ITER_ALL_KEYS, ITER_BOUND_KEYS, _NUM_ITER_KEY_BOUND_TYPES };
+
     static const struct {
         const char *keymap;
-        const xkb_keycode_t *keys_all;
-        const xkb_keycode_t *keys_bound;
-        size_t num_keys_all;
-        size_t num_keys_bound;
+        struct test_key_iterator {
+            struct test_key_iterator_direction {
+                const xkb_keycode_t *keys;
+                size_t keys_count;
+            } directions[_NUM_ITER_DIRECTIONS][_NUM_ITER_KEY_BOUND_TYPES];
+            xkb_keycode_t start;
+        } data[_NUM_ITER_START_TYPES];
     } tests[] = {
+        {
+            .keymap = "xkb_keymap {};",
+            .data = {
+                [ITER_DEFAULT_START] = {
+                    .start = 0,
+                    .directions = {{{0}}},
+                },
+                [ITER_EXPLICIT_START] = {
+                    .start = 2,
+                    .directions = {{{0}}},
+                },
+            },
+        },
         {
             .keymap =
                 "xkb_keymap {\n"
@@ -756,10 +1089,58 @@ test_key_iterator(void)
                 "    key <9> {[9]};\n"
                 "  };\n"
                 "};",
-            .keys_all = test0_all,
-            .num_keys_all = ARRAY_SIZE(test0_all),
-            .keys_bound = test0_bound,
-            .num_keys_bound = ARRAY_SIZE(test0_bound),
+            .data = {
+                [ITER_DEFAULT_START] = {
+                    .start = 0,
+                    .directions = {
+                        [ITER_ASCENDING] = {
+                            [ITER_ALL_KEYS] = {
+                                .keys = test0_all,
+                                .keys_count = ARRAY_SIZE(test0_all),
+                            },
+                            [ITER_BOUND_KEYS] = {
+                                .keys = test0_bound,
+                                .keys_count = ARRAY_SIZE(test0_bound),
+                            }
+                        },
+                        [ITER_DESCENDING] = {
+                            [ITER_ALL_KEYS] = {
+                                .keys = test0_all + ARRAY_SIZE(test0_all) - 1,
+                                .keys_count = ARRAY_SIZE(test0_all),
+                            },
+                            [ITER_BOUND_KEYS] = {
+                                .keys = test0_bound + ARRAY_SIZE(test0_bound) - 1,
+                                .keys_count = ARRAY_SIZE(test0_bound),
+                            }
+                        },
+                    },
+                },
+                [ITER_EXPLICIT_START] = {
+                    .start = 2,
+                    .directions = {
+                        [ITER_ASCENDING] = {
+                            [ITER_ALL_KEYS] = {
+                                .keys = &test0_all[1],
+                                .keys_count = 2,
+                            },
+                            [ITER_BOUND_KEYS] = {
+                                .keys = test0_bound,
+                                .keys_count = ARRAY_SIZE(test0_bound),
+                            }
+                        },
+                        [ITER_DESCENDING] = {
+                            [ITER_ALL_KEYS] = {
+                                .keys = &test0_all[1],
+                                .keys_count = 2,
+                            },
+                            [ITER_BOUND_KEYS] = {
+                                .keys = test0_bound,
+                                .keys_count = 1,
+                            }
+                        },
+                    },
+                }
+            },
         },
         {
             .keymap =
@@ -774,10 +1155,58 @@ test_key_iterator(void)
                 "    key <0x9000> {[9]};\n"
                 "  };\n"
                 "};",
-            .keys_all = test1_all,
-            .num_keys_all = ARRAY_SIZE(test1_all),
-            .keys_bound = test1_bound,
-            .num_keys_bound = ARRAY_SIZE(test1_bound),
+            .data = {
+                [ITER_DEFAULT_START] = {
+                    .start = 0,
+                    .directions = {
+                        [ITER_ASCENDING] = {
+                            [ITER_ALL_KEYS] = {
+                                .keys = test1_all,
+                                .keys_count = ARRAY_SIZE(test1_all),
+                            },
+                            [ITER_BOUND_KEYS] = {
+                                .keys = test1_bound,
+                                .keys_count = ARRAY_SIZE(test1_bound),
+                            }
+                        },
+                        [ITER_DESCENDING] = {
+                            [ITER_ALL_KEYS] = {
+                                .keys = test1_all + ARRAY_SIZE(test1_all) - 1,
+                                .keys_count = ARRAY_SIZE(test1_all),
+                            },
+                            [ITER_BOUND_KEYS] = {
+                                .keys = test1_bound + ARRAY_SIZE(test1_bound) - 1,
+                                .keys_count = ARRAY_SIZE(test1_bound),
+                            }
+                        },
+                    },
+                },
+                [ITER_EXPLICIT_START] = {
+                    .start = 0x4000,
+                    .directions = {
+                        [ITER_ASCENDING] = {
+                            [ITER_ALL_KEYS] = {
+                                .keys = &test1_all[2],
+                                .keys_count = 1,
+                            },
+                            [ITER_BOUND_KEYS] = {
+                                .keys = &test1_bound[1],
+                                .keys_count = 1,
+                            }
+                        },
+                        [ITER_DESCENDING] = {
+                            [ITER_ALL_KEYS] = {
+                                .keys = &test1_all[1],
+                                .keys_count = 2,
+                            },
+                            [ITER_BOUND_KEYS] = {
+                                .keys = test1_bound,
+                                .keys_count = 1,
+                            }
+                        },
+                    },
+                }
+            },
         },
         {
             .keymap =
@@ -792,74 +1221,131 @@ test_key_iterator(void)
                 "    key <9> {[9]};\n"
                 "  };\n"
                 "};",
-            .keys_all = test2_all,
-            .num_keys_all = ARRAY_SIZE(test2_all),
-            .keys_bound = test2_bound,
-            .num_keys_bound = ARRAY_SIZE(test2_bound),
+            .data = {
+                [ITER_DEFAULT_START] = {
+                    .start = 0,
+                    .directions = {
+                        [ITER_ASCENDING] = {
+                            [ITER_ALL_KEYS] = {
+                                .keys = test2_all,
+                                .keys_count = ARRAY_SIZE(test2_all),
+                            },
+                            [ITER_BOUND_KEYS] = {
+                                .keys = test2_bound,
+                                .keys_count = ARRAY_SIZE(test2_bound),
+                            }
+                        },
+                        [ITER_DESCENDING] = {
+                            [ITER_ALL_KEYS] = {
+                                .keys = test2_all + ARRAY_SIZE(test2_all) - 1,
+                                .keys_count = ARRAY_SIZE(test2_all),
+                            },
+                            [ITER_BOUND_KEYS] = {
+                                .keys = test2_bound + ARRAY_SIZE(test2_bound) - 1,
+                                .keys_count = ARRAY_SIZE(test2_bound),
+                            }
+                        },
+                    },
+                },
+                [ITER_EXPLICIT_START] = {
+                    .start = 12,
+                    .directions = {
+                        [ITER_ASCENDING] = {
+                            [ITER_ALL_KEYS] = {
+                                .keys = &test2_all[1],
+                                .keys_count = 2,
+                            },
+                            [ITER_BOUND_KEYS] = {
+                                .keys = &test2_bound[1],
+                                .keys_count = 1,
+                            }
+                        },
+                        [ITER_DESCENDING] = {
+                            [ITER_ALL_KEYS] = {
+                                .keys = &test2_all[0],
+                                .keys_count = 1,
+                            },
+                            [ITER_BOUND_KEYS] = {
+                                .keys = &test2_bound[0],
+                                .keys_count = 1,
+                            }
+                        },
+                    },
+                }
+            },
         },
     };
 
     for (size_t t = 0; t < ARRAY_SIZE(tests); t++) {
-        struct xkb_keymap * const keymap = test_compile_string(
+        keymap = test_compile_string(
             context, XKB_KEYMAP_FORMAT_TEXT_V1, tests[t].keymap
         );
         assert(keymap);
 
-        /* Reject invalid flags */
-        assert(!xkb_keymap_key_iterator_new(keymap, -1));
-        assert(!xkb_keymap_key_iterator_new(keymap, 0xffff));
-
         static const enum xkb_keymap_key_iterator_flags flags[] = {
             XKB_KEYMAP_KEY_ITERATOR_NO_FLAGS,
             XKB_KEYMAP_KEY_ITERATOR_DESCENDING_ORDER,
-            XKB_KEYMAP_KEY_ITERATOR_SKIP_UNBOUND,
+            XKB_KEYMAP_KEY_ITERATOR_INCLUDE_UNBOUND,
             XKB_KEYMAP_KEY_ITERATOR_DESCENDING_ORDER |
-            XKB_KEYMAP_KEY_ITERATOR_SKIP_UNBOUND,
+            XKB_KEYMAP_KEY_ITERATOR_INCLUDE_UNBOUND,
         };
         for (size_t f = 0; f < ARRAY_SIZE(flags); f++) {
-            fprintf(stderr, "------\n*** %s: #%zu, flags: 0x%x ***\n",
-                    __func__, t, flags[f]);
-            struct xkb_keymap_key_iterator * const iter =
-                xkb_keymap_key_iterator_new(keymap, flags[f]);
-            assert(iter);
+            config.flags = flags[f];
+            const bool ascending = !(
+                flags[f] &
+                XKB_KEYMAP_KEY_ITERATOR_DESCENDING_ORDER
+            );
+            const bool skip_unbound = !(
+                flags[f] &
+                XKB_KEYMAP_KEY_ITERATOR_INCLUDE_UNBOUND
+            );
 
-            const bool ascending =
-                !(flags[f] & XKB_KEYMAP_KEY_ITERATOR_DESCENDING_ORDER);
-            const bool skip_unbound =
-                (flags[f] & XKB_KEYMAP_KEY_ITERATOR_SKIP_UNBOUND);
-            size_t expected_count = (skip_unbound)
-                ? tests[t].num_keys_bound
-                : tests[t].num_keys_all;
-            const xkb_keycode_t * const keycodes = (skip_unbound)
-                ? tests[t].keys_bound
-                : tests[t].keys_all;
-            size_t count = 0;
-            size_t index = (skip_unbound)
-                ? ((ascending) ? 0 : tests[t].num_keys_bound - 1)
-                : ((ascending) ? 0 : tests[t].num_keys_all - 1);
-            xkb_keycode_t current = 0;
-            xkb_keycode_t previous = (ascending)
-                ? 0
-                : XKB_KEYCODE_INVALID;
+            enum { NEW, RESET, WITH_START };
 
-            while ((current = xkb_keymap_key_iterator_next(iter)) !=
-                   XKB_KEYCODE_INVALID) {
-                assert(count < expected_count);
-                assert(current == keycodes[index]);
-                assert((ascending && current > previous) ^
-                       (!ascending && current < previous));
+            const struct test_key_iterator * start_config[] = {
+                [NEW] = &tests[t].data[ITER_DEFAULT_START],
+                [RESET] = &tests[t].data[ITER_DEFAULT_START],
+                [WITH_START] = &tests[t].data[ITER_EXPLICIT_START],
+            };
 
-                count++;
-                if (ascending)
-                    index++;
-                else
-                    index--;
-                previous = current;
+            for (int i = NEW; i <= WITH_START; i++) {
+                config.flags = flags[f];
+                config.start = start_config[i]->start;
+                fprintf(stderr,
+                        "------\n*** %s: #%zu, flags: #%zu (0x%x), "
+                        "config: #%d, start: %"PRIu32"  ***\n",
+                        __func__, t, f, config.flags, i, config.start);
+                assert(xkb_keymap_key_iterator_init(&iter, keymap, &config) ==
+                       XKB_SUCCESS);
+
+                const struct test_key_iterator_direction *test =
+                    &start_config[i]->directions[!ascending][skip_unbound];
+
+                size_t count = 0;
+                const xkb_keycode_t *current_expected = test->keys;
+                xkb_keycode_t current = 0;
+                xkb_keycode_t previous = (ascending)
+                    ? 0
+                    : XKB_KEYCODE_INVALID;
+
+                while ((current = xkb_keymap_key_iterator_next(&iter)) !=
+                        XKB_KEYCODE_INVALID)
+                {
+                    assert(count < test->keys_count);
+                    assert_eq("Check keycode", *current_expected, current, "%"PRIu32);
+                    assert((ascending && current > previous) ^
+                           (!ascending && current < previous));
+
+                    count++;
+                    if (ascending)
+                        current_expected++;
+                    else
+                        current_expected--;
+                    previous = current;
+                }
+
+                assert_eq("Final count", test->keys_count, count, "%zu");
             }
-
-            assert(count == expected_count);
-
-            xkb_keymap_key_iterator_destroy(iter);
         }
 
         xkb_keymap_unref(keymap);
@@ -893,12 +1379,158 @@ test_issue_934(void)
     xkb_context_unref(context);
 }
 
+static void
+test_serialize_layouts_subset(bool update_output_files)
+{
+    struct xkb_context *context = test_get_context(CONTEXT_NO_FLAG);
+    assert(context);
+
+    /*
+     * This keymap is used to test that vmods remains unchanged, independently
+     * of the subset of layouts.
+     */
+    static const char keymap_str[] =
+        "xkb_keymap {\n"
+        "  xkb_keycodes { <LALT> = 64; <RALT> = 108; };\n"
+        "  xkb_compat {\n"
+        "    virtual_modifiers  Alt, LevelThree;\n"
+        "    interpret.repeat= False;\n"
+        "    setMods.clearLocks= True;\n"
+        "    interpret Alt_L+Any {\n"
+        "      virtualModifier= Alt;\n"
+        "      action = SetMods(modifiers=modMapMods);\n"
+        "    };\n"
+        "    interpret ISO_Level3_Shift+Any {\n"
+        "      useModMapMods= level1;\n"
+        "      virtualModifier= LevelThree;\n"
+        "      action= SetMods(modifiers=LevelThree);\n"
+        "    };\n"
+        "  };\n"
+        "  xkb_symbols {\n"
+        "    name[1] = \"1\";\n"
+        "    name[2] = \"2\";\n"
+        "    name[3] = \"3\";\n"
+        "    name[4] = \"4\";\n"
+        "    name[5] = \"5\";\n"
+        "    name[6] = \"6\";\n"
+        "    key <LALT> {\n"
+        "      groupsRedirect = 1,\n"
+        "      symbols[1] = [Alt_L],\n"
+        "      symbols[3] = [ISO_Level3_Shift],\n"
+        "      symbols[4] = [a],\n"
+        "      symbols[5] = [Alt_L],\n"
+        "      symbols[6] = [b]\n"
+        "    };\n"
+        "    key <RALT> {\n"
+        "      groupsRedirect = 2,\n"
+        "      symbols[1] = [ISO_Level3_Shift],\n"
+        "      symbols[3] = [c],\n"
+        "      symbols[4] = [ISO_Level3_Shift],\n"
+        "      symbols[5] = [d],\n"
+        "      symbols[6] = [e]\n"
+        "    };\n"
+        "    modifier_map Mod1 { <LALT> };\n"
+        "    modifier_map Mod5 { ISO_Level3_Shift };\n"
+        "  };\n"
+        "};";
+
+    struct xkb_keymap * const keymap = xkb_keymap_new_from_buffer(
+        context, keymap_str, sizeof(keymap_str),
+        XKB_KEYMAP_FORMAT_TEXT_V2, XKB_KEYMAP_COMPILE_NO_FLAGS
+    );
+    assert(keymap);
+
+    static const struct {
+        xkb_layout_mask_t layouts;
+        const char* expected;
+    } tests[] = {
+        {
+            .layouts = 0x3f,
+            .expected = GOLDEN_TESTS_OUTPUTS "serialize-layouts-subset-all.xkb"
+        },
+        {
+            .layouts = 0x1e,
+            .expected = GOLDEN_TESTS_OUTPUTS "serialize-layouts-subset-2,3,4,5.xkb"
+        },
+        {
+            .layouts = 0x1c,
+            .expected = GOLDEN_TESTS_OUTPUTS "serialize-layouts-subset-3,4,5.xkb"
+        },
+        {
+            .layouts = 0x20,
+            .expected = GOLDEN_TESTS_OUTPUTS "serialize-layouts-subset-6.xkb"
+        },
+    };
+
+    for (size_t t = 0; t < ARRAY_SIZE(tests); t++) {
+        fprintf(stderr, "------\n*** %s: #%zu ***\n", __func__, t);
+        const struct xkb_keymap_serialize_config config = {
+            .size = sizeof(config),
+            .format = XKB_KEYMAP_FORMAT_TEXT_V2,
+            .flags = TEST_KEYMAP_SERIALIZE_FLAGS |
+                     XKB_KEYMAP_SERIALIZE_EXPLICIT_VMODS,
+            .layouts = tests[t].layouts,
+        };
+        struct xkb_keymap_serialize_result result = { .size = sizeof(result) };
+        const enum xkb_status ret =
+            xkb_keymap_serialize(keymap, &config, &result);
+        assert(ret ^ !!result.serialized);
+        assert(ret ^ !!tests[t].expected);
+        assert(!!result.serialized == !!tests[t].expected);
+        assert_eq("layout mask", tests[t].layouts, result.layouts, "%"PRIx32);
+
+        char* const path = test_get_path(tests[t].expected);
+        assert(path);
+        if (tests[t].expected) {
+            assert(result.length == strlen(result.serialized) + 1);
+            if (update_output_files) {
+                fprintf(stderr, "Writing golden test output to: %s\n", path);
+                FILE *file = fopen(path, "wb");
+                assert(file);
+                fwrite(result.serialized, sizeof(*result.serialized),
+                       result.length - 1, file);
+                fclose(file);
+            } else {
+                fprintf(stderr, "Reading golden test output: %s\n", path);
+                char* const expected = test_read_file(tests[t].expected);
+                assert(expected);
+                if (!streq(expected, result.serialized)) {
+                    fprintf(stderr,
+                            "Failure: dumped map differs from expected.\n"
+                            "Path to expected file: %s\n"
+                            "Length: expected %zu, got: %zu\n"
+                            "Dumped map:\n%s\n",
+                            path, strlen(expected),
+                            result.length, result.serialized);
+                    assert(false);
+                }
+                free(expected);
+            }
+        }
+        free(path);
+        free(result.serialized);
+    }
+
+    xkb_keymap_unref(keymap);
+    xkb_context_unref(context);
+}
+
 int
-main(void)
+main(int argc, char *argv[])
 {
     test_init();
 
+    bool update_output_files = false;
+    int arg_index = 0;
+    while (++arg_index < argc) {
+        if (streq(argv[arg_index], "update")) {
+            /* Update files with *obtained* results */
+            update_output_files = true;
+        }
+    }
+
     test_supported_formats();
+    test_xkb_key();
     test_garbage_key();
     test_keymap();
     test_no_extra_groups();
@@ -908,6 +1540,7 @@ main(void)
     test_keynames_atoms();
     test_key_iterator();
     test_issue_934();
+    test_serialize_layouts_subset(update_output_files);
 
     return EXIT_SUCCESS;
 }

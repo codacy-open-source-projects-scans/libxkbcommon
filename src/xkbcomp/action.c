@@ -49,7 +49,7 @@ enum action_field {
     ACTION_FIELD_GROUP,
     ACTION_FIELD_X,
     ACTION_FIELD_Y,
-    ACTION_FIELD_ACCEL,
+    ACTION_FIELD_REPEAT,
     ACTION_FIELD_BUTTON,
     ACTION_FIELD_VALUE,
     ACTION_FIELD_CONTROLS,
@@ -77,7 +77,7 @@ InitActionsInfo(const struct xkb_keymap *keymap, ActionsInfo *info)
     /* Increment default button. */
     info->actions[ACTION_TYPE_PTR_DEFAULT].dflt.flags = 0;
     info->actions[ACTION_TYPE_PTR_DEFAULT].dflt.value = 1;
-    info->actions[ACTION_TYPE_PTR_MOVE].ptr.flags = ACTION_ACCEL;
+    info->actions[ACTION_TYPE_PTR_MOVE].ptr.flags = ACTION_REPEAT;
     info->actions[ACTION_TYPE_SWITCH_VT].screen.flags = ACTION_SAME_SCREEN;
     info->actions[ACTION_TYPE_REDIRECT_KEY].redirect.keycode =
         keymap->redirect_key_auto;
@@ -97,9 +97,9 @@ static const LookupEntry fieldStrings[] = {
     { "group",            ACTION_FIELD_GROUP           },
     { "x",                ACTION_FIELD_X               },
     { "y",                ACTION_FIELD_Y               },
-    { "accel",            ACTION_FIELD_ACCEL           },
-    { "accelerate",       ACTION_FIELD_ACCEL           },
-    { "repeat",           ACTION_FIELD_ACCEL           },
+    { "repeat",           ACTION_FIELD_REPEAT          },
+    { "accel",            ACTION_FIELD_REPEAT          },
+    { "accelerate",       ACTION_FIELD_REPEAT          },
     { "button",           ACTION_FIELD_BUTTON          },
     { "value",            ACTION_FIELD_VALUE           },
     { "controls",         ACTION_FIELD_CONTROLS        },
@@ -415,13 +415,12 @@ CheckGroupField(const struct xkb_keymap_info *keymap_info,
     } else {
         flags &= ~ACTION_PENDING_COMPUTATION;
         /* `+n`, `-n` are relative, `n` is absolute. */
-        if (!(flags & ACTION_ABSOLUTE_SWITCH)) {
+        if (absolute) {
+            *group_rtrn = (int32_t) (idx - 1);
+        } else {
             *group_rtrn = (int32_t) idx;
             if (value->common.type == STMT_EXPR_NEGATE)
                 *group_rtrn = -*group_rtrn;
-        }
-        else {
-            *group_rtrn = (int32_t) (idx - 1);
         }
     }
 
@@ -479,7 +478,7 @@ HandleMovePtr(const struct xkb_keymap_info *keymap_info,
               ExprDef **value_ptr)
 {
     struct xkb_context * restrict const ctx = keymap_info->keymap.ctx;
-    struct xkb_pointer_action *act = &action->ptr;
+    struct xkb_pointer_motion_action *act = &action->ptr;
 
     if (field == ACTION_FIELD_X || field == ACTION_FIELD_Y) {
         int64_t val = 0;
@@ -518,9 +517,9 @@ HandleMovePtr(const struct xkb_keymap_info *keymap_info,
 
         return PARSER_SUCCESS;
     }
-    else if (field == ACTION_FIELD_ACCEL) {
+    else if (field == ACTION_FIELD_REPEAT) {
         return CheckBooleanFlag(ctx, keymap_info->strict, action->type, field,
-                                ACTION_ACCEL, array_ndx, value, &act->flags);
+                                ACTION_REPEAT, array_ndx, value, &act->flags);
     }
 
     return ReportIllegal(ctx, action->type, field, keymap_info->strict);
@@ -543,15 +542,20 @@ HandlePtrBtn(const struct xkb_keymap_info *keymap_info,
             return ReportActionNotArray(ctx, action->type, field,
                                         keymap_info->strict);
 
-        if (!ExprResolveButton(ctx, value, &btn))
+        if (!ExprResolveButton(ctx, value, &btn)) {
+            static_assert(XKB_POINTER_BUTTON_MIN == 1 &&
+                          XKB_POINTER_BUTTON_MAX == 5, "invalid message");
             return ReportMismatch(ctx, XKB_ERROR_WRONG_FIELD_TYPE, action->type,
                                   field, "integer (range 1..5)",
                                   keymap_info->strict);
+        }
 
-        if (btn < 0 || btn > 5) {
+        static_assert(XKB_POINTER_BUTTON_DEFAULT < XKB_POINTER_BUTTON_MIN, "");
+        if (btn < XKB_POINTER_BUTTON_DEFAULT || btn > XKB_POINTER_BUTTON_MAX) {
             log_err(ctx, XKB_LOG_MESSAGE_NO_ID,
-                    "Button must specify default or be in the range 1..5; "
-                    "Illegal button value %"PRId64" ignored\n", btn);
+                    "Button must specify default or be in the range %d..%d; "
+                    "Illegal button value %"PRId64" ignored\n",
+                    XKB_POINTER_BUTTON_MIN, XKB_POINTER_BUTTON_MAX, btn);
             return (keymap_info->strict & PARSER_NO_FIELD_TYPE_MISMATCH)
                 ? PARSER_FATAL_ERROR
                 : PARSER_RECOVERABLE_ERROR;
@@ -585,17 +589,28 @@ HandlePtrBtn(const struct xkb_keymap_info *keymap_info,
                 : PARSER_RECOVERABLE_ERROR;
         }
 
-        act->count = (uint8_t) val;
+        /*
+         * NOTE: `count` is parsed but ignored. It seems an oversight in
+         * X.Org’s xkbcomp, since `SA_LockPtrBtn` has no `count` parameter.
+         * See: https://xorg.freedesktop.org/archive/current/doc/kbproto/xkbproto.html#:~:text=SA_LockPtrBtn
+         */
+        if (action->type != ACTION_TYPE_PTR_LOCK)
+            act->count = (uint8_t) val;
         return PARSER_SUCCESS;
     }
 
     return ReportIllegal(ctx, action->type, field, keymap_info->strict);
 }
 
+enum {
+    SET_POINTER_DEFAULT_BUTTON_AFFECT_DEFAULT = 0,
+    _SET_POINTER_DEFAULT_BUTTON_AFFECT_NUM_ENTRIES
+};
+
 static const LookupEntry ptrDflts[] = {
-    { "dfltbtn", 1 },
-    { "defaultbutton", 1 },
-    { "button", 1 },
+    { "dfltbtn", SET_POINTER_DEFAULT_BUTTON_AFFECT_DEFAULT },
+    { "defaultbutton", SET_POINTER_DEFAULT_BUTTON_AFFECT_DEFAULT },
+    { "button", SET_POINTER_DEFAULT_BUTTON_AFFECT_DEFAULT },
     { NULL, 0 }
 };
 
@@ -619,6 +634,8 @@ HandleSetPtrDflt(const struct xkb_keymap_info *keymap_info,
         if (!ExprResolveEnum(ctx, value, &val, ptrDflts))
             return ReportMismatch(ctx, XKB_ERROR_WRONG_FIELD_TYPE, action->type,
                                   field, "pointer component", keymap_info->strict);
+        static_assert(_SET_POINTER_DEFAULT_BUTTON_AFFECT_NUM_ENTRIES == 1,
+                      "affect has a single valid value and thus it is not stored");
         return PARSER_SUCCESS;
     }
     else if (field == ACTION_FIELD_BUTTON || field == ACTION_FIELD_VALUE) {
@@ -639,20 +656,25 @@ HandleSetPtrDflt(const struct xkb_keymap_info *keymap_info,
             button = value;
         }
 
-        if (!ExprResolveButton(ctx, button, &btn))
+        if (!ExprResolveButton(ctx, button, &btn)) {
+            static_assert(XKB_POINTER_BUTTON_MIN == 1 &&
+                          XKB_POINTER_BUTTON_MAX == 5, "invalid message");
             return ReportMismatch(ctx, XKB_ERROR_WRONG_FIELD_TYPE, action->type,
                                   field, "integer (range 1..5)",
                                   keymap_info->strict);
+        }
 
-        if (btn < 0 || btn > 5) {
+        static_assert(XKB_POINTER_BUTTON_DEFAULT < XKB_POINTER_BUTTON_MIN, "");
+        if (btn < XKB_POINTER_BUTTON_DEFAULT || btn > XKB_POINTER_BUTTON_MAX) {
             log_err(ctx, XKB_LOG_MESSAGE_NO_ID,
-                    "New default button value must be in the range 1..5; "
-                    "Illegal default button value %"PRId64" ignored\n", btn);
+                    "New default button value must be in the range %d..%d; "
+                    "Illegal default button value %"PRId64" ignored\n",
+                    XKB_POINTER_BUTTON_MIN, XKB_POINTER_BUTTON_MAX, btn);
             return (keymap_info->strict & PARSER_NO_FIELD_TYPE_MISMATCH)
                 ? PARSER_FATAL_ERROR
                 : PARSER_RECOVERABLE_ERROR;
         }
-        if (btn == 0) {
+        if (btn == XKB_POINTER_BUTTON_DEFAULT) {
             log_err(ctx, XKB_LOG_MESSAGE_NO_ID,
                     "Cannot set default pointer button to \"default\"; "
                     "Illegal default button setting ignored\n");
@@ -808,7 +830,7 @@ HandleRedirectKey(const struct xkb_keymap_info *keymap_info,
         if (flags)
             return ReportMismatch(ctx, XKB_ERROR_WRONG_FIELD_TYPE, action->type,
                                   field, "modifier mask", keymap_info->strict);
-        act->affect |= m;
+        act->affect_mods |= m;
         if (field == ACTION_FIELD_MODIFIERS)
             act->mods |= m;
         else

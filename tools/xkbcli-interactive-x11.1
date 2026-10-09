@@ -26,8 +26,11 @@ key to exit.
 This is a debugging tool, its behavior or output is not guaranteed to be stable.
 .
 .Bl -tag -width Ds
-.It Fl \-help
+.It Fl h, \-help
 Print help and exit
+.
+.It Fl V, \-version
+Print version information and exit
 .
 .It Fl \-local\-state
 Enable local state handling and ignore modifiers/layouts state updates
@@ -50,12 +53,18 @@ is a comma-separated-list of the following entries:
 .Bl -tag -compact -hang
 .It Ar sticky-keys
 Enable sticky-keys accessibility feature
-.It Ar latch-to-lock
+.It Ar sticky-keys-no-simultaneous
+Deactivate sticky-keys if 2 keys or more are pressed simultaneously.
+.It Ar sticky-keys-latch-to-lock
 Enable latch-to-lock option for sticky-keys
 .It Ar latch-simultaneous
 Relax the strict tapping sequence requirement operating key latches.
 .It Ar overlay Ns Brq 1-2
 Enable the corresponding keyboard overlay
+.It Ar mouse-keys
+Enable the mouse emulation
+.It Ar server-actions
+Enable server actions
 .El
 Each entry may be preceded by
 .Ar \+
@@ -134,13 +143,20 @@ Enable verbose debugging output
 .It Fl 1, \-uniline
 Enable uniline event output
 .
-.It Fl \-multiline
+.It Fl *, \-multiline
 Enable multiline event output
 .
 .It Fl \-consumed\-mode Brq xkb|gtk
 Set the consumed modifiers mode (default: xkb)
 .
-.It Fl \-no-state-report
+.It Fl \-report\-frames
+Report frame boundaries. It implies
+.Fl \-local\-state
+and
+.Fl \-legacy\-state\-api=false
+\&.
+.
+.It Fl \-no\-state\-report
 Do not report state changes
 .El
 .
@@ -148,4 +164,4 @@ Do not report state changes
 .Xr xkbcli 1 ,
 .Xr xkbcli\-interactive\-evdev 1 ,
 .Xr xkbcli\-interactive\-wayland 1 ,
-.Lk https://xkbcommon.org "The libxkbcommon online documentation"
+.Lk https://xkbcommon.org "The xkbcommon online documentation"

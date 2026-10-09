@@ -51,8 +51,9 @@ _xkbcli_controls() {
 	)
 	local -a controls=(
 		"sticky-keys:sticky-keys accessibility feature"
-		"latch-to-lock:latch-to-lock option for sticky-keys"
-		"latch-simulations:relax the strict tapping sequence requirement for operating key latches"
+		"sticky-keys-latch-to-lock:latch-to-lock option for sticky-keys"
+		"sticky-keys-no-simultaneous:deactivate sticky-keys if 2 keys or more are pressed simultaneously"
+		"latch-simultaneous:relax the strict tapping sequence requirement for operating key latches"
 		"overlay1:Overlay 1"
 		"overlay2:Overlay 2"
 		"overlay3:Overlay 3"
@@ -61,6 +62,8 @@ _xkbcli_controls() {
 		"overlay6:Overlay 6"
 		"overlay7:Overlay 7"
 		"overlay8:Overlay 8"
+		"mouse-keys:Mouse emulation"
+		"server-actions:Server actions"
 	)
 	local -a completed_controls=( ${${(s-,-)${words[CURRENT]#*=}}} )
 	local -a remaining_controls=( ${controls:#(${(~j.|.)completed_controls#[+-]}):*} )
@@ -79,7 +82,7 @@ _xkbcli_controls() {
 _xkbcli_commands() {
 	local -a commands=(
 		'list:list available rules, models, layouts, variants and options'
-		'info:print information about libxkbcommon configuration'
+		'info:print information about xkbcommon configuration'
 		'interactive:interactive debugger for XKB keymaps'
 		'interactive-wayland:interactive debugger for XKB keymaps for Wayland'
 		'interactive-x11:interactive debugger for XKB keymaps for X11'
@@ -107,7 +110,8 @@ local -a rmlvo_opts_common=(
 _xkbcli-list() {
 	_arguments -S : \
 		'(-v --verbose)'{-v,--verbose}'[increase verbosity]' \
-		'--help[print a help message and exit]' \
+		'(-h --help)'{-h,--help}'[print a help message and exit]' \
+		'(-V --version)'{-V,--version}'[print version information and exit]' \
 		'--ruleset=[load a ruleset]' \
 		'--skip-default-paths[do not load the default XKB paths]' \
 		'--load-exotic[load the exotic (extra) rulesets]' \
@@ -115,10 +119,11 @@ _xkbcli-list() {
 }
 
 local -a interactive_common=(
-	'--help[print a help message and exit]'
+	'(-h --help)'{-h,--help}'[print a help message and exit]'
+	'(-V --version)'{-V,--version}'[print version information and exit]'
 	'--verbose[enable verbose debugging output]'
-	'(-1 --uniline --multiline)--multiline[enable multiline event output]'
-	'(-1 --uniline --multiline)'{-1,--uniline}'[enable uniline event output]'
+	'(-* --multiline -1 --uniline)'{-\*,--multiline}'[enable multiline event output]'
+	'(-* --multiline -1 --uniline)'{-1,--uniline}'[enable uniline event output]'
 	'--consumed-mode=[select the consumed modifiers mode]:mode:(xkb gtk)'
 	'(--report-state-changes)--no-state-report[do not report changes to the state]'
 	'--format=[use the given keymap format]:xkb format:(v1 v2)'
@@ -156,14 +161,14 @@ _xkbcli-interactive-evdev() {
 
 local -a dump_common=(
 	'--verbose[enable verbose debugging output]'
-	'--help[print a help message and exit]'
+	'(-h --help)'{-h,--help}'[print a help message and exit]'
+	'(-V --version)'{-V,--version}'[print version information and exit]'
 	'(--format)--input-format=[use the given input keymap format]:xkb format:(v1 v2)'
 	'(--format)--output-format=[use the given output keymap format]:xkb format:(v1 v2)'
 	'(--input-format --output-format)--format=[use the given keymap format for input and output]:xkb format:(v1 v2)'
 	'--strict[parse using the strict mode]'
 	'--no-pretty[do not pretty print when serializing a keymap]'
 	'--drop-unused[disable unused bits serialization]'
-	'--explicit-values[force serializing all values]'
 )
 
 _xkbcli-dump-keymap() {
@@ -179,7 +184,8 @@ _xkbcli-dump-keymap-wayland() {
 
 _xkbcli-compile-keymap() {
 	_arguments -S : \
-		'--help[print a help message and exit]' \
+		'(-h --help)'{-h,--help}'[print a help message and exit]' \
+		'(-V --version)'{-V,--version}'[print version information and exit]' \
 		'--verbose[enable verbose debugging output]' \
 		'--test[test compilation but do not print the keymap]' \
 		+ input \
@@ -194,7 +200,11 @@ _xkbcli-compile-keymap() {
 		'(--format)--output-format=[the keymap format to use for serializing]:xkb format:(v1 v2)' \
 		'--no-pretty[do not pretty print when serializing a keymap]' \
 		'--drop-unused[disable unused bits serialization]' \
+		'--explicit-defaults[force serializing defaults values]' \
+		'--explicit-vmods[force serializing virtual modifiers encodings]' \
+		'--explicit-keys[force serializing keys values]' \
 		'--explicit-values[force serializing all values]' \
+		'--layouts-mask[Hexadecimal mask of the layouts indices to select for serializing]:' \
 		'(--kccgst-yaml --rmlvo --modmaps)--kccgst[print a keymap in KcCGST format]' \
 		'(--kccgst      --rmlvo --modmaps)--kccgst-yaml[print a KcCGST keymap in YAML format]' \
 		'(--kccgst-yaml         --modmaps)--rmlvo[print the full RMLVO in YAML format]' \
@@ -203,7 +213,8 @@ _xkbcli-compile-keymap() {
 
 _xkbcli-compile-compose() {
 	_arguments -S : \
-		'--help[print a help message and exit]' \
+	    '(-h --help)'{-h,--help}'[print a help message and exit]' \
+	    '(-V --version)'{-V,--version}'[print version information and exit]' \
 		'--verbose[enable verbose debugging output]' \
 		'--test[test compilation but do not print the Compose file]' \
 		'--locale=[use the specified locale]:locale:_locales'
@@ -221,7 +232,8 @@ _xkbcli-how-to-type() {
 
 	local ret=1
 	_arguments -S : \
-		'--help[print a help message and exit]' \
+	    '(-h --help)'{-h,--help}'[print a help message and exit]' \
+	    '(-V --version)'{-V,--version}'[print version information and exit]' \
 		'--verbose[enable verbose debugging output]' \
 		'--keysym[treat the argument only as a keysym]' \
 		'--disable-compose[disable Compose support]' \

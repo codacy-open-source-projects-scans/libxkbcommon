@@ -13,7 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "xkbcommon/xkbcommon-errors.h"
+#include "xkbcommon/xkbcommon-status.h"
 #include "xkbcommon/xkbcommon-keysyms.h"
 #include "xkbcommon/xkbcommon-names.h"
 #include "xkbcommon/xkbcommon.h"
@@ -431,6 +431,10 @@ test_state_modes(struct xkb_context *ctx)
     );
     assert(keymap);
 
+    enum xkb_status status;
+    assert(!xkb_state_new_with_mode(keymap, 0xffff, &status) &&
+           status == XKB_ERROR_UNSUPPORTED_STATE_MODE);
+
     enum { LEGACY_STATE_MODE = 0xff };
 
     const xkb_mod_mask_t shift =
@@ -447,7 +451,7 @@ test_state_modes(struct xkb_context *ctx)
         struct components_entry {
             struct state_components components;
             enum xkb_state_component changed;
-            enum xkb_error_code error;
+            enum xkb_status status;
         } update_mask;
         struct components_entry update_event;
         enum xkb_state_component update_key;
@@ -474,7 +478,7 @@ test_state_modes(struct xkb_context *ctx)
                 .components = { .locked_mods = num },
                 .changed = XKB_STATE_MODS_LOCKED | XKB_STATE_MODS_EFFECTIVE
                          | XKB_STATE_LEDS,
-                .error = 0,
+                .status = 0,
             },
         },
         {
@@ -496,7 +500,7 @@ test_state_modes(struct xkb_context *ctx)
                 .components = { .locked_mods = num },
                 /* wrong mode */
                 .changed = 0,
-                .error = XKB_ERROR_UNEXPECTED_STATE_MODE,
+                .status = XKB_ERROR_UNEXPECTED_STATE_MODE,
             },
         },
         {
@@ -518,7 +522,7 @@ test_state_modes(struct xkb_context *ctx)
                 .components = { .locked_mods = num },
                 /* wrong mode */
                 .changed = 0,
-                .error = XKB_ERROR_UNEXPECTED_STATE_MODE,
+                .status = XKB_ERROR_UNEXPECTED_STATE_MODE,
             },
         },
         {
@@ -541,7 +545,7 @@ test_state_modes(struct xkb_context *ctx)
                 .components = { .locked_mods = num },
                 .changed = XKB_STATE_MODS_LOCKED | XKB_STATE_MODS_EFFECTIVE
                          | XKB_STATE_LEDS,
-                .error = 0,
+                .status = 0,
             },
         },
     };
@@ -550,11 +554,13 @@ test_state_modes(struct xkb_context *ctx)
         fprintf(stderr, "------\n*** %s: #%zu (mode: %d) ***\n",
                 __func__, t, tests[t].mode);
 
+        status = XKB_SUCCESS;
         struct xkb_state * const state =
             (tests[t].mode == (enum xkb_state_mode)LEGACY_STATE_MODE)
                 ? xkb_state_new(keymap)
-                : xkb_state_new_with_mode(keymap, tests[t].mode);
+                : xkb_state_new_with_mode(keymap, tests[t].mode, &status);
         assert(state);
+        assert(status == XKB_SUCCESS);
 
         enum xkb_state_component changed = 0;
         int code = EXIT_SUCCESS;
@@ -583,7 +589,8 @@ test_state_modes(struct xkb_context *ctx)
 
         #ifndef _WIN32
         const struct xkb_event event = {
-            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
             .components = {
                 .changed = tests[t].update_event.changed,
                 .components = tests[t].update_event.components,
@@ -591,7 +598,9 @@ test_state_modes(struct xkb_context *ctx)
         };
         #endif
         RUN_ISOLATED(code, changed,
-            changed = xkb_state_update_event(state, &event);
+            const enum xkb_status status_ =
+                xkb_state_update_event(state, &event, &changed);
+            assert(status_ == XKB_SUCCESS);
             /* Avoid Valgrind false positive */
             xkb_state_unref(state);
             xkb_keymap_unref(keymap);
@@ -606,7 +615,8 @@ test_state_modes(struct xkb_context *ctx)
         RUN_ISOLATED(code, changed,
             changed = xkb_state_update_key(state, KEY_LEFTALT + EVDEV_OFFSET,
                                            XKB_KEY_DOWN);
-            xkb_state_unref(state)
+            xkb_state_unref(state);
+            xkb_keymap_unref(keymap);
         );
         if (code != SKIP_TEST) {
             assert_eq("update_key: code",
@@ -644,17 +654,17 @@ test_state_modes(struct xkb_context *ctx)
             .affect_locked_mods = tests[t].update_synthetic.components.locked_mods,
             .locked_mods = tests[t].update_synthetic.components.locked_mods,
         };
-        const struct xkb_state_update update = {
+        const struct xkb_synthetic_update update = {
             .size = sizeof(update),
             .components = &components_update
         };
 
         struct result {
             enum xkb_state_component changed;
-            enum xkb_error_code error;
+            enum xkb_status status;
         } r = { 0 };
         RUN_ISOLATED(code, r,
-            r.error = xkb_state_update_synthetic(state, &update, &r.changed);
+            r.status = xkb_state_update_synthetic(state, &update, &r.changed);
             /* Avoid Valgrind false positive */
             xkb_state_unref(state);
             xkb_keymap_unref(keymap);
@@ -662,7 +672,7 @@ test_state_modes(struct xkb_context *ctx)
         if (code != SKIP_TEST) {
             assert_eq("update_synthetic: code", EXIT_SUCCESS, code, "%d");
             assert_eq("update_synthetic: error",
-                      tests[t].update_synthetic.error, r.error, "%d");
+                      tests[t].update_synthetic.status, r.status, "%d");
             assert_eq("update_synthetic: changed",
                       tests[t].update_synthetic.changed, r.changed, "%d");
         }
@@ -768,12 +778,12 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
     struct xkb_state *state = xkb_state_new(keymap);
     assert(state);
     struct xkb_machine_builder *builder =
-        xkb_machine_builder_new(keymap, XKB_MACHINE_BUILDER_NO_FLAGS);
+        xkb_machine_builder_new(keymap, NULL, NULL);
     assert(builder);
-    struct xkb_machine *sm = xkb_machine_new(builder);
+    struct xkb_machine *sm = xkb_machine_new(builder, NULL);
     assert(sm);
-    xkb_machine_builder_destroy(builder);
-    struct xkb_events *events = xkb_events_new_batch(ctx, XKB_EVENTS_NO_FLAGS);
+    xkb_machine_builder_unref(builder);
+    struct xkb_events *events = xkb_events_new(ctx, NULL, NULL);
     assert(events);
     const xkb_keysym_t *syms;
     xkb_keysym_t one_sym;
@@ -793,7 +803,7 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
 #define update_states(state1, sm, key, direction) do {                \
     xkb_state_update_key((state1), (key), (direction));               \
     assert(xkb_machine_process_key((sm), (key), (direction), (events))\
-           == 0);                                                     \
+           == XKB_SUCCESS);                                           \
 } while (0)
 
     /* LCtrl down */
@@ -803,11 +813,16 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_DOWN,
-            .keycode = KEY_LEFTCTRL + EVDEV_OFFSET
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_LEFTCTRL + EVDEV_OFFSET,
+                .direction = XKB_KEY_DOWN
+            }
         },
         {
-            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
             .components = {
                 .components = {
                     .base_mods = xkb_keymap_mod_get_mask2(keymap, ctrl),
@@ -815,13 +830,21 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
                 },
                 .changed = XKB_STATE_MODS_DEPRESSED | XKB_STATE_MODS_EFFECTIVE
             }
-        }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+            .key = {
+                .keycode = KEY_LEFTCTRL + EVDEV_OFFSET,
+                .direction = XKB_KEY_DOWN
+            }
+        },
     );
     assert(xkb_state_mod_name_is_active(state, XKB_MOD_NAME_CTRL,
                                         XKB_STATE_MODS_DEPRESSED) > 0);
     /* Ensure it does not repeat */
     update_states(state, sm, KEY_LEFTCTRL + EVDEV_OFFSET, XKB_KEY_REPEATED);
-    check_events_(events, { .type = XKB_EVENT_TYPE_NONE });
+    check_events_(events, { .ctx = ctx, .type = XKB_EVENT_TYPE_NONE });
     assert(xkb_state_mod_name_is_active(state, XKB_MOD_NAME_CTRL,
                                         XKB_STATE_MODS_DEPRESSED) > 0);
 
@@ -832,11 +855,16 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_DOWN,
-            .keycode = KEY_RIGHTALT + EVDEV_OFFSET
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_RIGHTALT + EVDEV_OFFSET,
+                .direction = XKB_KEY_DOWN
+            }
         },
         {
-            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
             .components = {
                 .components = {
                     .base_mods = xkb_keymap_mod_get_mask2(keymap, ctrl)
@@ -846,7 +874,11 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
                 },
                 .changed = XKB_STATE_MODS_DEPRESSED | XKB_STATE_MODS_EFFECTIVE
             }
-        }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+        },
     );
     assert(xkb_state_mod_name_is_active(state, XKB_MOD_NAME_CTRL,
                                         XKB_STATE_MODS_DEPRESSED) > 0);
@@ -931,7 +963,7 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
                             NULL)));
     /* Ensure it does not repeat */
     update_states(state, sm, KEY_RIGHTALT + EVDEV_OFFSET, XKB_KEY_REPEATED);
-    check_events_(events, { .type = XKB_EVENT_TYPE_NONE });
+    check_events_(events, { .ctx = ctx, .type = XKB_EVENT_TYPE_NONE });
 
     /* RAlt down */
     update_states(state, sm, KEY_LEFTCTRL + EVDEV_OFFSET, XKB_KEY_UP);
@@ -940,11 +972,16 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_UP,
-            .keycode = KEY_LEFTCTRL + EVDEV_OFFSET
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_LEFTCTRL + EVDEV_OFFSET,
+                .direction = XKB_KEY_UP
+            }
         },
         {
-            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
             .components = {
                 .components = {
                     .base_mods = xkb_keymap_mod_get_mask2(keymap, alt),
@@ -952,7 +989,11 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
                 },
                 .changed = XKB_STATE_MODS_DEPRESSED | XKB_STATE_MODS_EFFECTIVE
             }
-        }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+        },
     );
     assert(xkb_state_mod_name_is_active(state, XKB_MOD_NAME_CTRL,
                                         XKB_STATE_MODS_EFFECTIVE) == 0);
@@ -982,16 +1023,25 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_UP,
-            .keycode = KEY_RIGHTALT + EVDEV_OFFSET
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_RIGHTALT + EVDEV_OFFSET,
+                .direction = XKB_KEY_UP
+            }
         },
         {
-            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
             .components = {
                 .components = { .base_mods = 0, .mods = 0, },
                 .changed = XKB_STATE_MODS_DEPRESSED | XKB_STATE_MODS_EFFECTIVE
             }
-        }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+        },
     );
     assert(xkb_state_mod_name_is_active(state, XKB_MOD_NAME_MOD1,
                                         XKB_STATE_MODS_EFFECTIVE) == 0);
@@ -1072,11 +1122,16 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_DOWN,
-            .keycode = KEY_CAPSLOCK + EVDEV_OFFSET
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_CAPSLOCK + EVDEV_OFFSET,
+                .direction = XKB_KEY_DOWN
+            }
         },
         {
-            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
             .components = {
                 .changed = XKB_STATE_MODS_DEPRESSED | XKB_STATE_MODS_LOCKED
                          | XKB_STATE_MODS_EFFECTIVE | XKB_STATE_LEDS,
@@ -1087,7 +1142,11 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
                     .leds = caps_led
                 }
             }
-        }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+        },
     );
     update_states(state, sm, KEY_CAPSLOCK + EVDEV_OFFSET, XKB_KEY_REPEATED);
     check_events_(events, { .type = XKB_EVENT_TYPE_NONE });
@@ -1095,11 +1154,16 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_UP,
-            .keycode = KEY_CAPSLOCK + EVDEV_OFFSET
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_CAPSLOCK + EVDEV_OFFSET,
+                .direction = XKB_KEY_UP
+            }
         },
         {
-            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
             .components = {
                 .changed = XKB_STATE_MODS_DEPRESSED,
                 .components = {
@@ -1109,17 +1173,26 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
                     .leds = caps_led
                 }
             }
-        }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+        },
     );
     update_states(state, sm, KEY_CAPSLOCK + EVDEV_OFFSET, XKB_KEY_DOWN);
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_DOWN,
-            .keycode = KEY_CAPSLOCK + EVDEV_OFFSET
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_CAPSLOCK + EVDEV_OFFSET,
+                .direction = XKB_KEY_DOWN
+            }
         },
         {
-            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
             .components = {
                 .changed = XKB_STATE_MODS_DEPRESSED,
                 .components = {
@@ -1129,7 +1202,11 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
                     .leds = caps_led
                 }
             }
-        }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+        },
     );
     update_states(state, sm, KEY_CAPSLOCK + EVDEV_OFFSET, XKB_KEY_REPEATED);
     check_events_(events, { .type = XKB_EVENT_TYPE_NONE });
@@ -1137,11 +1214,16 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_UP,
-            .keycode = KEY_CAPSLOCK + EVDEV_OFFSET
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_CAPSLOCK + EVDEV_OFFSET,
+                .direction = XKB_KEY_UP
+            }
         },
         {
-            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
             .components = {
                 .changed = XKB_STATE_MODS_DEPRESSED | XKB_STATE_MODS_LOCKED
                          | XKB_STATE_MODS_EFFECTIVE | XKB_STATE_LEDS,
@@ -1152,7 +1234,11 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
                     .leds = 0,
                 }
             }
-        }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+        },
     );
 
     /* Repeat NumLock does nothing: repeating key */
@@ -1165,11 +1251,16 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_DOWN,
-            .keycode = KEY_NUMLOCK + EVDEV_OFFSET
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_NUMLOCK + EVDEV_OFFSET,
+                .direction = XKB_KEY_DOWN
+            }
         },
         {
-            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
             .components = {
                 .changed = XKB_STATE_MODS_DEPRESSED | XKB_STATE_MODS_LOCKED
                          | XKB_STATE_MODS_EFFECTIVE | XKB_STATE_LEDS,
@@ -1180,25 +1271,42 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
                     .leds = num_led
                 }
             }
-        }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+        },
     );
     update_states(state, sm, KEY_NUMLOCK + EVDEV_OFFSET, XKB_KEY_REPEATED);
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_REPEATED,
-            .keycode = KEY_NUMLOCK + EVDEV_OFFSET
-        }
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_NUMLOCK + EVDEV_OFFSET,
+                .direction = XKB_KEY_REPEATED
+            }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+        },
     );
     update_states(state, sm, KEY_NUMLOCK + EVDEV_OFFSET, XKB_KEY_UP);
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_UP,
-            .keycode = KEY_NUMLOCK + EVDEV_OFFSET
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_NUMLOCK + EVDEV_OFFSET,
+                .direction = XKB_KEY_UP
+            }
         },
         {
-            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
             .components = {
                 .changed = XKB_STATE_MODS_DEPRESSED,
                 .components = {
@@ -1208,17 +1316,26 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
                     .leds = num_led
                 }
             }
-        }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+        },
     );
     update_states(state, sm, KEY_NUMLOCK + EVDEV_OFFSET, XKB_KEY_DOWN);
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_DOWN,
-            .keycode = KEY_NUMLOCK + EVDEV_OFFSET
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_NUMLOCK + EVDEV_OFFSET,
+                .direction = XKB_KEY_DOWN
+            }
         },
         {
-            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
             .components = {
                 .changed = XKB_STATE_MODS_DEPRESSED,
                 .components = {
@@ -1228,25 +1345,42 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
                     .leds = num_led
                 }
             }
-        }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+        },
     );
     update_states(state, sm, KEY_NUMLOCK + EVDEV_OFFSET, XKB_KEY_REPEATED);
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_REPEATED,
-            .keycode = KEY_NUMLOCK + EVDEV_OFFSET
-        }
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_NUMLOCK + EVDEV_OFFSET,
+                .direction = XKB_KEY_REPEATED
+            }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+        },
     );
     update_states(state, sm, KEY_NUMLOCK + EVDEV_OFFSET, XKB_KEY_UP);
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_UP,
-            .keycode = KEY_NUMLOCK + EVDEV_OFFSET
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_NUMLOCK + EVDEV_OFFSET,
+                .direction = XKB_KEY_UP
+            }
         },
         {
-            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
             .components = {
                 .changed = XKB_STATE_MODS_DEPRESSED | XKB_STATE_MODS_LOCKED
                          | XKB_STATE_MODS_EFFECTIVE | XKB_STATE_LEDS,
@@ -1257,7 +1391,11 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
                     .leds = 0,
                 }
             }
-        }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+        },
     );
 
     /* One symbol */
@@ -1269,26 +1407,50 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_DOWN,
-            .keycode = KEY_5 + EVDEV_OFFSET
-        }
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_5 + EVDEV_OFFSET,
+                .direction = XKB_KEY_DOWN
+            }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+        },
     );
     /* Ensure it does repeat */
     update_states(state, sm, KEY_5 + EVDEV_OFFSET, XKB_KEY_REPEATED);
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_REPEATED,
-            .keycode = KEY_5 + EVDEV_OFFSET
-        }
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_5 + EVDEV_OFFSET,
+                .direction = XKB_KEY_REPEATED
+            }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+        },
     );
     update_states(state, sm, KEY_5 + EVDEV_OFFSET, XKB_KEY_UP);
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_UP,
-            .keycode = KEY_5 + EVDEV_OFFSET
-        }
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_5 + EVDEV_OFFSET,
+                .direction = XKB_KEY_UP
+            }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+        },
     );
 
     /* Multiple symbols */
@@ -1303,26 +1465,50 @@ test_update_key(struct xkb_context *ctx, struct xkb_keymap *keymap,
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_DOWN,
-            .keycode = KEY_6 + EVDEV_OFFSET
-        }
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_6 + EVDEV_OFFSET,
+                .direction = XKB_KEY_DOWN
+            }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+        },
     );
     /* Ensure it does repeat */
     update_states(state, sm, KEY_6 + EVDEV_OFFSET, XKB_KEY_REPEATED);
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_REPEATED,
-            .keycode = KEY_6 + EVDEV_OFFSET
-        }
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_6 + EVDEV_OFFSET,
+                .direction = XKB_KEY_REPEATED
+            }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+        },
     );
     update_states(state, sm, KEY_6 + EVDEV_OFFSET, XKB_KEY_UP);
     check_events_(
         events,
         {
-            .type = XKB_EVENT_TYPE_KEY_UP,
-            .keycode = KEY_6 + EVDEV_OFFSET
-        }
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = KEY_6 + EVDEV_OFFSET,
+                .direction = XKB_KEY_UP
+            }
+        },
+        {
+            .ctx = ctx,
+            .type = XKB_EVENT_TYPE_FRAME,
+        },
     );
 
     xkb_events_destroy(events);

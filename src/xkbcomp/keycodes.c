@@ -562,7 +562,7 @@ AddKeyName(KeyNamesInfo *info, xkb_keycode_t kc, xkb_atom_t name,
     } else {
         /* No previous keycode */
         if (!keycode_store_insert_key(&info->keycodes, kc, name)) {
-            log_err(info->ctx, XKB_ERROR_ALLOCATION_ERROR,
+            log_err(info->ctx, XKB_ERROR_ALLOCATION_FAILURE_,
                     "Cannot add keycode\n");
             return false;
         }
@@ -682,12 +682,18 @@ HandleIncludeKeycodes(KeyNamesInfo *info, IncludeStmt *include, bool report)
     InitKeyNamesInfo(&included, info->keymap_info, 0 /* unused */);
     included.name = steal(&include->stmt);
 
+    const struct parser_keymap_config config = {
+        .format = info->keymap_info->keymap.format,
+        .strict = info->keymap_info->strict
+    };
+
     for (IncludeStmt *stmt = include; stmt; stmt = stmt->next_incl) {
         KeyNamesInfo next_incl;
         XkbFile *file;
 
         char path[PATH_MAX];
-        file = ProcessIncludeFile(info->ctx, stmt, FILE_TYPE_KEYCODES,
+
+        file = ProcessIncludeFile(info->ctx, &config, stmt, FILE_TYPE_KEYCODES,
                                   path, sizeof(path));
         if (!file) {
             info->errorCount += 10;
@@ -715,7 +721,7 @@ static bool
 HandleKeycodeDef(KeyNamesInfo *info, KeycodeDef *stmt, bool report)
 {
     if (stmt->value < 0 || stmt->value > XKB_KEYCODE_MAX) {
-        log_err(info->ctx, XKB_LOG_MESSAGE_NO_ID,
+        log_err(info->ctx, XKB_ERROR_INVALID_KEYCODE_,
                 "Illegal keycode %"PRId64": must be between 0..%u; "
                 "Key ignored\n", stmt->value, XKB_KEYCODE_MAX);
         return false;
@@ -782,7 +788,7 @@ HandleAliasDef(KeyNamesInfo *info, const KeyAliasDef *def, bool report)
                 /*
                  * Note that we override the key even if the alias is proved
                  * invalid afterwards. This would be a bug in the keycodes
-                 * files or rules, not libxkbcommon.
+                 * files or rules, not xkbcommon.
                  */
                 keycode_store_delete_key(&info->keycodes, match_name);
             } else {
@@ -915,7 +921,7 @@ HandleKeycodesFile(KeyNamesInfo *info, XkbFile *file)
         if (info->errorCount > 10) {
             log_err(info->ctx, XKB_LOG_MESSAGE_NO_ID,
                     "Abandoning keycodes file \"%s\"\n",
-                    safe_map_name(file));
+                    safe_map_name(file->name));
             break;
         }
     }

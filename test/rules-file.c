@@ -54,14 +54,22 @@ test_rules(struct xkb_context *ctx, const struct test_data *data)
 
     bool passed = true;
     xkb_layout_index_t explicit_layouts = 0;
-    for (int k = 0; k < 2; k++) {
+    enum api_type {
+        API_PRIVATE = 0,
+        API_PUBLIC
+    };
+    for (enum api_type api = API_PRIVATE; api <= API_PUBLIC; api++) {
         bool ok;
         const struct xkb_rule_names rmlvo = {
-            data->rules, data->model, data->layout, data->variant, data->options
+            .rules = data->rules,
+            .model = data->model,
+            .layout = data->layout,
+            .variant = data->variant,
+            .options = data->options
         };
         struct xkb_component_names kccgst;
 
-        if (k == 0) {
+        if (api == API_PRIVATE) {
             /* Private API */
             ok = xkb_components_from_rules_names(ctx, &rmlvo, &kccgst,
                                                  &explicit_layouts);
@@ -154,27 +162,83 @@ test_encodings(struct xkb_context *ctx)
     }
 }
 
+static void
+test_token_boundaries(struct xkb_context *ctx)
+{
+    static const struct test_data tests[] = {
+        {
+            .rules = "token-boundaries-1",
+
+            .model = "my_model", .layout = "my_layout", .variant = "",
+            .options = NULL,
+            .should_fail = true,
+        },
+        {
+            .rules = "token-boundaries-2",
+
+            .model = "my_model", .layout = "my_layout", .variant = "",
+            .options = NULL,
+            .should_fail = true,
+        },
+        {
+            .rules = "token-boundaries-3",
+
+            .model = "my_model", .layout = "my_layout", .variant = "",
+            .options = NULL,
+            .should_fail = true,
+        },
+        {
+            .rules = "token-boundaries-4",
+
+            .model = "my_model", .layout = "my_layout", .variant = "my_variant",
+            .options = NULL,
+
+            .keycodes = "my_keycodes", .types = "my_types",
+            .compat = "my_compat",
+            .symbols = "my_symbols+extra_variant+valid",
+            .explicit_layouts = 1,
+        },
+    };
+
+    for (size_t t = 0; t < ARRAY_SIZE(tests); t++) {
+        fprintf(stderr, "------\n*** %s: #%zu ***\n", __func__, t);
+        assert(test_rules(ctx, &tests[t]));
+    }
+}
+
 /* Only parse strict decimal groups */
 static void
 test_strict_decimal_groups(struct xkb_context *ctx)
 {
     static const struct test_data tests[] = {
         {
-            .rules = "invalid-group-index",
+            .rules = "invalid-group-index-1",
 
-            .model = "my_model", .layout = "1,2", .variant = NULL,
+            .model = "m", .layout = "1,2", .variant = NULL,
             .options = NULL,
 
-            .keycodes = "default_keycodes", .types = "default_types",
-            .compat = "default_compat",
-            .symbols = "default_symbols+default_symbols:2",
-            .explicit_layouts = 2,
+            .should_fail = true,
+        },
+        {
+            .rules = "invalid-group-index-2",
+
+            .model = "m", .layout = "1", .variant = NULL,
+            .options = NULL,
+
+            .should_fail = true,
+        },
+        {
+            .rules = "invalid-group-index-3",
+
+            .model = "m", .layout = "1", .variant = NULL,
+            .options = NULL,
+
             .should_fail = true,
         },
         {
             .rules = "invalid-group-qualifier",
 
-            .model = "my_model", .layout = "1,2", .variant = NULL,
+            .model = "m", .layout = "1,2", .variant = NULL,
             .options = NULL,
 
             .keycodes = "default_keycodes", .types = "default_types",
@@ -325,40 +389,72 @@ test_wild_card(struct xkb_context *ctx)
 static void
 test_extended_wilcards(struct xkb_context *ctx)
 {
-#define ENTRY(_rules, _layout, _variant, _symbols, _layouts, _fail)   \
-    { .rules = (_rules), .model = NULL,                               \
-      .layout = (_layout), .variant = (_variant), .options = NULL,    \
-      .keycodes = "evdev", .types = "complete", .compat = "complete", \
-      .symbols = (_symbols) , .explicit_layouts = (_layouts),         \
-      .should_fail = (_fail) }
+#define ENTRY(_model, _layout, _variant, _options, _symbols, _layouts, _fail) {\
+      .rules = "extended-wild-cards", .model = (_model),                       \
+      .layout = (_layout), .variant = (_variant), .options = (_options),       \
+      .keycodes = "evdev", .types = "complete", .compat = "complete",          \
+      .symbols = (_symbols) , .explicit_layouts = (_layouts),                  \
+      .should_fail = (_fail)                                                   \
+    }
 
     static const struct test_data tests[] = {
-        ENTRY("extended-wild-cards", "l1", NULL, "pc+l10:1", 1, false),
-        ENTRY("extended-wild-cards", "l1", "v1", "pc+l20:1", 1, false),
-        ENTRY("extended-wild-cards", "l1", "v2", "pc+l30(v2):1", 1, false),
+        /*
+         * Model
+         */
+
+        ENTRY(NULL, "l1", NULL, NULL, "pc+l10:1+o1+o2+o4+o6:1+o8:1", 1, false),
+        ENTRY("", "l1", NULL, NULL, "pc+l10:1+o1+o2+o4+o6:1+o8:1", 1, false),
+        ENTRY("m", "l1", NULL, NULL, "pc+l10:1+o1+o2+o4+o6:1+o8:1", 1, false),
+
+        /*
+         * Layout / variant
+         */
+
+        ENTRY("m", "l1", NULL, NULL, "pc+l10:1+o1+o2+o4+o6:1+o8:1", 1, false),
+        ENTRY("m", "l1", "v1", NULL, "pc+l20:1+o1+o2+o4+o6:1+o8:1", 1, false),
+        ENTRY("m", "l1", "v2", NULL, "pc+l30(v2):1+o1+o2+o4+o6:1+o8:1", 1, false),
         /* legacy wild card * does not catch empty variant */
-        ENTRY("extended-wild-cards", "l2", NULL, "pc+l2:1", 1, false),
-        ENTRY("extended-wild-cards", "l2", "v1", "pc+l40(v1):1", 1, false),
-        ENTRY("extended-wild-cards", "l2", "v2", "pc+l40(v2):1", 1, false),
-        ENTRY("extended-wild-cards", "l3", NULL, "pc+l50:1", 1, false),
-        ENTRY("extended-wild-cards", "l3", "v1", "pc+l50(v1):1", 1, false),
-        ENTRY("extended-wild-cards", "l3", "v2", "pc+l50(v2):1", 1, false),
+        ENTRY("m", "l2", NULL, NULL, "pc+l2:1+o1+o2+o4+o6:1+o8:1", 1, false),
+        ENTRY("m", "l2", "v1", NULL, "pc+l40(v1):1+o1+o2+o4+o6:1+o8:1", 1, false),
+        ENTRY("m", "l2", "v2", NULL, "pc+l40(v2):1+o1+o2+o4+o6:1+o8:1", 1, false),
+        ENTRY("m", "l3", NULL, NULL, "pc+l50:1+o1+o2+o4+o6:1+o8:1", 1, false),
+        ENTRY("m", "l3", "v1", NULL, "pc+l50(v1):1+o1+o2+o4+o6:1+o8:1", 1, false),
+        ENTRY("m", "l3", "v2", NULL, "pc+l50(v2):1+o1+o2+o4+o6:1+o8:1", 1, false),
         /* ? wild card does catch empty variant */
-        ENTRY("extended-wild-cards", "l4", NULL, "pc+l4:1", 1, false),
-        ENTRY("extended-wild-cards", "l4", "v1", "pc+l4(v1):1", 1, false),
-        ENTRY("extended-wild-cards", "l4", "v2", "pc+l4(v20):1", 1, false),
-        ENTRY("extended-wild-cards", "l1,l1,l1,l2", ",v1,v2,",
-              "pc+l10:1+l20:2+l30(v2):3+l2:4", 4, false),
-        ENTRY("extended-wild-cards", "l2,l2,l3,l3", "v1,v2,,v1",
-              "pc+l40(v1):1+l40(v2):2+l50:3+l50(v1):4", 4, false),
-        ENTRY("extended-wild-cards", "l3,l4,l4,l4", "v2,,v1,v2",
-              "pc+l50(v2):1+l4:2+l4(v1):3+l4(v20):4", 4, false),
+        ENTRY("m", "l4", NULL, NULL, "pc+l4:1+o1+o2+o4+o6:1+o8:1", 1, false),
+        ENTRY("m", "l4", "v1", NULL, "pc+l4(v1):1+o1+o2+o4+o6:1+o8:1", 1, false),
+        ENTRY("m", "l4", "v2", NULL, "pc+l4(v20):1+o1+o2+o4+o6:1+o8:1", 1, false),
+        ENTRY("m", "l1,l1,l1,l2", ",v1,v2,", NULL,
+              "pc+l10:1+l20:2+l30(v2):3+l2:4"
+              "+o1+o2+o4+o6:1+o8:1+o6:2+o8:2+o6:3+o8:3+o6:4+o8:4", 4, false),
+        ENTRY("m", "l2,l2,l3,l3", "v1,v2,,v1", NULL,
+              "pc+l40(v1):1+l40(v2):2+l50:3+l50(v1):4"
+              "+o1+o2+o4+o6:1+o8:1+o6:2+o8:2+o6:3+o8:3+o6:4+o8:4", 4, false),
+        ENTRY("m", "l3,l4,l4,l4", "v2,,v1,v2", NULL,
+              "pc+l50(v2):1+l4:2+l4(v1):3+l4(v20):4"
+              "+o1+o2+o4+o6:1+o8:1+o6:2+o8:2+o6:3+o8:3+o6:4+o8:4", 4, false),
+
+        /*
+         * Options
+         */
+
+        /* Empty list: check `*`, `<none>`, `<any>` wild cards */
+        ENTRY("m", "l1", NULL, NULL, "pc+l10:1+o1+o2+o4+o6:1+o8:1", 1, false),
+        ENTRY("m", "l1", NULL, "", "pc+l10:1+o1+o2+o4+o6:1+o8:1", 1, false),
+        ENTRY("m", "l1", NULL, ",", "pc+l10:1+o1+o2+o4+o6:1+o8:1", 1, false),
+        ENTRY("m", "l1", NULL, "!", "pc+l10:1+o1+o2+o4+o6:1+o8:1", 1, false), /* discarded */
+        /* Some values */
+        ENTRY("m", "l1", NULL, "*", "pc+l10:1+o1+o3+o4+o7:1+o8:1", 1, false),
+        ENTRY("m", "l1", NULL, ":", "pc+l10:1+o1+o3+o4+o7:1+o8:1", 1, false),
+        ENTRY("m", "l1", NULL, "=", "pc+l10:1+o1+o3+o4+o7:1+o8:1", 1, false),
+        ENTRY("m", "l1", NULL, "opt0", "pc+l10:1+o0+o1+o3+o4+o7:1+o8:1", 1, false),
     };
+
 #undef ENTRY
 
-    for (unsigned int k = 0; k < ARRAY_SIZE(tests); k++) {
-        fprintf(stderr, "------\n*** %s: #%u ***\n", __func__, k);
-        assert(test_rules(ctx, &tests[k]));
+    for (size_t t = 0; t < ARRAY_SIZE(tests); t++) {
+        fprintf(stderr, "------\n*** %s: #%zu ***\n", __func__, t);
+        assert(test_rules(ctx, &tests[t]));
     }
 }
 
@@ -392,18 +488,18 @@ test_layout_index_ranges(struct xkb_context *ctx, const char *too_much_layouts,
         /* Test index ranges: multiple layouts */
         ENTRY("a,b", NULL, NULL, "a+b:2", 2, false),
         ENTRY("a,b", ",c", NULL, "a+b(c):2", 2, false),
-        ENTRY("layout_e,layout_a", NULL, NULL, "e:1+x:2", 2, false),
+        ENTRY("layout_e,layout_a", NULL, NULL, "e:1+x:2+m:2", 2, false),
         ENTRY("layout_a,layout_b,layout_c,layout_d", NULL, NULL,
-              "a:1+y:2+layout_c:3+layout_d:4+z:3", 4, false),
+              "a:1+y:2+layout_c:3+layout_d:4+m:1+z:3", 4, false),
         ENTRY("layout_a,layout_b,layout_c,layout_d",
               "extra,,,extra", NULL,
-              "a:1+y:2+layout_c:3+layout_d(extra):4+z:3"
+              "a:1+y:2+layout_c:3+layout_d(extra):4+m:1+z:3"
               "+foo:1|bar:1+foo:4|bar:4", 4, false),
         ENTRY("layout_a,layout_b,layout_c,layout_d,layout_e", NULL, NULL,
-              "a:1+y:2+layout_c:3+layout_d:4+layout_e:5+z:3", 5, false),
+              "a:1+y:2+layout_c:3+layout_d:4+layout_e:5+m:1+z:3", 5, false),
         /* Check that special indices merge the KcCGST values in the expected order */
         ENTRY("layout_a,layout_b,layout_c", NULL, "option_3,option_2,option_1",
-              "a:1+y:2+layout_c:3+z:3+III:2+JJJ:2+HHH:3+KKK:3+LLL+OOO:2+MMM:3+NNN:3",
+              "a:1+y:2+layout_c:3+m:1+z:3+III:2+JJJ:2+HHH:3+KKK:3+LLL+OOO:2+MMM:3+NNN:3",
               3, false),
 #undef ENTRY
         /* Test index ranges: too much layouts */
@@ -851,6 +947,7 @@ main(int argc, char *argv[])
     assert(ctx);
 
     test_encodings(ctx);
+    test_token_boundaries(ctx);
     test_strict_decimal_groups(ctx);
     test_simple(ctx);
     test_wild_card(ctx);

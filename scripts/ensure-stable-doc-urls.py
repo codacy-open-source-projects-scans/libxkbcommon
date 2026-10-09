@@ -9,8 +9,8 @@
 # legacy URLs as redirections to their canonical page.
 
 import argparse
-from enum import IntFlag
 import glob
+from enum import IntFlag
 from itertools import chain
 from pathlib import Path
 from string import Template
@@ -59,7 +59,7 @@ REDIRECTION_PAGE_TEMPLATE = Template(
         <div id="top">
             <div id="titlearea" style="padding: 1em 0 1em 0.5em;">
                 <div id="projectname">
-                    libxkbcommon
+                    xkbcommon
                 </div>
             </div>
         </div>
@@ -161,7 +161,7 @@ def update_registry(registry_path: Path, doc_dir: Path, updates: Sequence[str]):
             print(f"[ERROR] Update not processed: {update}")
         exit_code |= ExitCode.INVALID_UPDATES
     if missing_updates:
-        for old in missing_updates:
+        for old in tuple(missing_updates):
             # Handle older Doxygen versions
             if old in registry.get(OPTIONAL_ENTRY, []):
                 print(

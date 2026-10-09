@@ -49,9 +49,9 @@ xkb_feature_supported(enum xkb_feature feature, uint32_t value)
         return is_supported_enum_value_array(
             xkb_feature_values, ARRAY_SIZE(xkb_feature_values), value
         );
-    case XKB_FEATURE_ENUM_ERROR_CODE:
+    case XKB_FEATURE_ENUM_STATUS:
         return is_supported_enum_value_array(
-            xkb_error_code_values, ARRAY_SIZE(xkb_error_code_values), value
+            xkb_status_values, ARRAY_SIZE(xkb_status_values), value
         );
     case XKB_FEATURE_ENUM_CONTEXT_FLAGS:
         return is_supported_flag_value(
@@ -85,7 +85,7 @@ xkb_feature_supported(enum xkb_feature feature, uint32_t value)
         );
     case XKB_FEATURE_ENUM_STATE_COMPONENT:
         return is_supported_flag_value(
-            XKB_STATE_COMPONENT_VALUES, false, value
+            XKB_STATE_COMPONENT_VALUES, true, value
         );
     case XKB_FEATURE_ENUM_LAYOUT_OUT_OF_RANGE_POLICY:
         return is_supported_enum_value_mask(XKB_LAYOUT_OUT_OF_RANGE_POLICY_VALUES, value);
@@ -109,10 +109,20 @@ xkb_feature_supported(enum xkb_feature feature, uint32_t value)
         return is_supported_flag_value(
             XKB_MACHINE_BUILDER_FLAGS_VALUES, true, value
         );
+    case XKB_FEATURE_ENUM_MACHINE_FLAGS:
+        return is_supported_flag_value(
+            XKB_MACHINE_FLAGS_VALUES, true, value
+        );
     case XKB_FEATURE_ENUM_EVENT_TYPE:
         return is_supported_enum_value_mask(XKB_EVENT_TYPE_VALUES, value);
     case XKB_FEATURE_ENUM_KEY_DIRECTION:
         return is_supported_enum_value_mask(XKB_KEY_DIRECTION_VALUES, value);
+    case XKB_FEATURE_ENUM_POINTER_MOTION_FLAGS:
+        return is_supported_flag_value(
+            XKB_POINTER_MOTION_FLAGS_VALUES, true, value
+        );
+    case XKB_FEATURE_ENUM_POINTER_BUTTON_STATE:
+        return is_supported_enum_value_mask(XKB_POINTER_BUTTON_STATE_VALUES, value);
     case XKB_FEATURE_ENUM_EVENTS_FLAGS:
         return is_supported_flag_value(
             XKB_EVENTS_FLAGS_VALUES, true, value

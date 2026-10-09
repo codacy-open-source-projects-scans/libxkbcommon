@@ -6,15 +6,19 @@
 #include "config.h"
 
 #include <fcntl.h>
+#include <limits.h>
+#include <stdint.h>
 #include <time.h>
 #include <getopt.h>
 
+#include "test.h"
 #include "xkbcommon/xkbcommon.h"
 
 #include "utils.h"
 #include "keymap-formats.h"
 
 #include "bench.h"
+#include "bench-utils.h"
 
 #define DEFAULT_ITERATIONS 3000
 #define DEFAULT_STDEV 0.05
@@ -192,7 +196,7 @@ main(int argc, char **argv)
             serialize_flags |= XKB_KEYMAP_SERIALIZE_KEEP_UNUSED;
             break;
         case OPT_KEYMAP_EXPLICIT_VALUES:
-            serialize_flags |= XKB_KEYMAP_SERIALIZE_EXPLICIT;
+            serialize_flags |= TEST_KEYMAP_SERIALIZE_EXPLICIT;
             break;
         case OPT_KEYMAP:
             keymap_path = optarg;
@@ -218,11 +222,18 @@ main(int argc, char **argv)
                 exit(EXIT_INVALID_USAGE);
             }
             {
-                const int max_iterations_raw = atoi(optarg);
-                if (max_iterations_raw <= 0)
+                errno = 0;
+                char *endp = optarg;
+                const unsigned long raw = strtoul(optarg, &endp, 10);
+                if (errno || optarg == endp || *endp != '\0' ||
+                    !raw || raw > UINT_MAX) {
+                    fprintf(stderr,
+                            "ERROR: invalid 'iter' parameter; "
+                            "using default: %u\n", DEFAULT_ITERATIONS);
                     max_iterations = DEFAULT_ITERATIONS;
-                else
-                    max_iterations = (unsigned int) max_iterations_raw;
+                } else {
+                    max_iterations = (unsigned int)raw;
+                }
             }
             explicit_iterations = true;
             break;
@@ -231,9 +242,17 @@ main(int argc, char **argv)
                 usage(stderr, argv);
                 exit(EXIT_INVALID_USAGE);
             }
-            stdev = atof(optarg) / 100;
-            if (stdev <= 0)
-                stdev = DEFAULT_STDEV;
+            {
+                errno = 0;
+                char *endp = optarg;
+                stdev = strtod(optarg, &endp) / 100;
+                if (errno || optarg == endp || *endp != '\0' || stdev <= 0){
+                    fprintf(stderr,
+                            "ERROR: invalid 'stdev' parameter; "
+                            "using default: %.3f\n", DEFAULT_STDEV);
+                    stdev = DEFAULT_STDEV;
+                }
+            }
             max_iterations = 0;
             break;
         default:
@@ -323,26 +342,42 @@ main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
     close(stderr_new);
+    uintptr_t acc = 0;
 
     if (explicit_iterations) {
         stdev = 0;
+#ifdef KEYMAP_DUMP
+        bench_opaque_input(keymap);
+        bench_opaque_input(keymap_output_format);
+        bench_opaque_input(serialize_flags);
+#else
+        bench_opaque_input(context);
+        bench_opaque_input(keymap_str);
+        bench_opaque_input(keymap_str_length);
+        bench_opaque_input(keymap_input_format);
+#endif
         bench_start2(&bench);
         for (unsigned int i = 0; i < max_iterations; i++) {
 #ifdef KEYMAP_DUMP
             char *s = xkb_keymap_get_as_string2(keymap, keymap_output_format,
                                                 serialize_flags);
-            assert(s);
+            if (!s)
+                exit(EXIT_FAILURE);
+            acc |= (uintptr_t)s;
             free(s);
 #else
             keymap = xkb_keymap_new_from_buffer(
                 context, keymap_str, keymap_str_length,
                 keymap_input_format, XKB_KEYMAP_COMPILE_NO_FLAGS
             );
-            assert(keymap);
+            if (!keymap)
+                exit(EXIT_FAILURE);
+            acc |= (uintptr_t)keymap;
             xkb_keymap_unref(keymap);
 #endif
         }
         bench_stop2(&bench);
+        bench_do_not_optimize(acc);
 
         bench_elapsed(&bench, &elapsed);
         est.elapsed = (bench_time_elapsed_nanoseconds(&elapsed)) / max_iterations;
@@ -351,18 +386,57 @@ main(int argc, char **argv)
         bench_start2(&bench);
 #ifdef KEYMAP_DUMP
         BENCH(stdev, max_iterations, elapsed, est,
+            /*
+             * Pre
+             */
+            bench_opaque_input(keymap);
+            bench_opaque_input(keymap_output_format);
+            bench_opaque_input(serialize_flags),
+            /*
+             * Consume
+             */
+            bench_do_not_optimize(acc),
+            /*
+             * Post
+             */
+            ,
+            /*
+             * Benched code
+             */
             char *s = xkb_keymap_get_as_string2(keymap, keymap_output_format,
                                                 serialize_flags);
-            assert(s);
+            if (!s)
+                exit(EXIT_FAILURE);
+            acc |= (uintptr_t)s;
             free(s);
         );
 #else
         BENCH(stdev, max_iterations, elapsed, est,
+            /*
+             * Pre
+             */
+            bench_opaque_input(context);
+            bench_opaque_input(keymap_str);
+            bench_opaque_input(keymap_str_length);
+            bench_opaque_input(keymap_input_format),
+            /*
+             * Consume
+             */
+            bench_do_not_optimize(acc),
+            /*
+             * Post
+             */
+            ,
+            /*
+             * Benched code
+             */
             keymap = xkb_keymap_new_from_buffer(
                 context, keymap_str, keymap_str_length,
                 keymap_input_format, XKB_KEYMAP_COMPILE_NO_FLAGS
             );
-            assert(keymap);
+            if (!keymap)
+                exit(EXIT_FAILURE);
+            acc |= (uintptr_t)keymap;
             xkb_keymap_unref(keymap);
         );
 #endif
@@ -392,18 +466,18 @@ main(int argc, char **argv)
     bench_elapsed(&bench, &total_elapsed);
     if (explicit_iterations) {
         fprintf(stderr,
-                "mean: %lld µs; compiled %u keymaps in %ld.%06lds\n",
-                est.elapsed / 1000, max_iterations,
-                total_elapsed.seconds, total_elapsed.nanoseconds / 1000);
+                "mean: %lld µs; compiled %u keymaps in %ld.%06llds\n",
+                bench_pico_to_micro_rounded(est.elapsed), max_iterations,
+                total_elapsed.seconds, bench_pico_to_micro(total_elapsed.picoseconds));
     } else {
         fprintf(stderr,
                 "mean: %lld µs; stdev: %Lf%% (target: %f%%); "
-                "last run: compiled %u keymaps in %ld.%06lds; "
-                "total time: %ld.%06lds\n", est.elapsed / 1000,
+                "last run: compiled %u keymaps in %ld.%06llds; "
+                "total time: %ld.%06llds\n", bench_pico_to_micro_rounded(est.elapsed),
                 (long double) est.stdev * 100.0 / (long double) est.elapsed,
-                stdev * 100,
-                max_iterations, elapsed.seconds, elapsed.nanoseconds / 1000,
-                total_elapsed.seconds, total_elapsed.nanoseconds / 1000);
+                stdev * 100, max_iterations,
+                elapsed.seconds, bench_pico_to_micro(elapsed.picoseconds),
+                total_elapsed.seconds, bench_pico_to_micro(total_elapsed.picoseconds));
     }
 
 keymap_error:

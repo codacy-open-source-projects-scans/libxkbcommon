@@ -21,8 +21,11 @@ Path to a keymap file, or
 .Dq \-
 to read the standard input
 .
-.It Fl \-help
+.It Fl h, \-help
 Print help and exit
+.
+.It Fl V, \-version
+Print version information and exit
 .
 .It Fl \-verbose
 Enable verbose debugging output
@@ -71,8 +74,14 @@ The keymap format (numeric or label, e.g.\&
 .Dq v1 )
 for both parsing and serializing
 .
-.It Fl \-strict
+.It Fl \-input-strict
 Parse using the strict mode.
+.
+.It Fl \-output-strict
+Serialize using the strict mode.
+.
+.It Fl \-strict
+Parse and serialize using the strict mode.
 .
 .It Fl \-no\-pretty
 Disable pretty-printing for keymap serialization.
@@ -80,8 +89,20 @@ Disable pretty-printing for keymap serialization.
 .It Fl \-drop\-unused
 Disable unused bits serialization.
 .
+.It Fl \-explicit\-defaults
+Force serializing default values.
+.
+.It Fl \-explicit\-vmods
+Force serializing virtual modifiers encodings.
+.
+.It Fl \-explicit\-keys
+Force serializing keys values.
+.
 .It Fl \-explicit\-values
 Force serializing all values.
+.
+.It Fl \-layouts\-mask
+Hexadecimal mask of the layouts indices to select for serializing.
 .
 .It Fl \-keymap Oo Ar PATH Oc , Fl \-from\-xkb Oo Ar PATH Oc
 Load the XKB keymap from a file, ignore RMLVO options. If
@@ -125,4 +146,4 @@ Note that this option may affect the default values of the previous options.
 .
 .Sh SEE ALSO
 .Xr xkbcli 1 ,
-.Lk https://xkbcommon.org "The libxkbcommon online documentation"
+.Lk https://xkbcommon.org "The xkbcommon online documentation"

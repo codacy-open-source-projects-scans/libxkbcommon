@@ -11,6 +11,7 @@
 #include <assert.h>
 
 #include "xkbcommon/xkbcommon.h"
+#include "src/features/enums.h"
 #include "src/state-priv.h"
 #include "test.h"
 
@@ -148,18 +149,34 @@ xkb_event_eq(const struct xkb_event *event1, const struct xkb_event *event2)
     if (event1->type != event2->type)
         return false;
     switch (event1->type) {
-    case XKB_EVENT_TYPE_KEY_DOWN:
-    case XKB_EVENT_TYPE_KEY_REPEATED:
-    case XKB_EVENT_TYPE_KEY_UP:
-        return event1->keycode == event2->keycode;
-    case XKB_EVENT_TYPE_COMPONENTS_CHANGE:
+    case XKB_EVENT_TYPE_INVALID:
+    case XKB_EVENT_TYPE_FRAME:
+        /* No parameters */
+        return true;
+    case XKB_EVENT_TYPE_KEY:
+        return event1->key.keycode == event2->key.keycode &&
+               event1->key.direction == event2->key.direction;
+    case XKB_EVENT_TYPE_STATE_COMPONENTS:
         return memcmp(&event1->components, &event2->components,
                       sizeof(event1->components)) == 0;
+    case XKB_EVENT_TYPE_POINTER_MOTION:
+        return memcmp(&event1->pointer_motion, &event2->pointer_motion,
+                      sizeof(event1->pointer_motion)) == 0;
+    case XKB_EVENT_TYPE_POINTER_BUTTON:
+        return memcmp(&event1->pointer_button, &event2->pointer_button,
+                      sizeof(event1->pointer_button)) == 0;
+    case XKB_EVENT_TYPE_TERMINATE_DISPLAY_SERVER:
+        /* No parameters */
+        return true;
+    case XKB_EVENT_TYPE_SWITCH_VIRTUAL_CONSOLE:
+        return memcmp(&event1->virtual_console, &event2->virtual_console,
+                      sizeof(event1->virtual_console)) == 0;
+        break;
     default:
         {} /* Label followed by declaration requires C23 */
-        static_assert(XKB_EVENT_TYPE_COMPONENTS_CHANGE == 4 &&
-                      XKB_EVENT_TYPE_COMPONENTS_CHANGE ==
-                      (enum xkb_event_type) _LAST_XKB_EVENT_TYPE,
+        static_assert(XKB_EVENT_TYPE_SWITCH_VIRTUAL_CONSOLE == 7 &&
+                      XKB_EVENT_TYPE_SWITCH_VIRTUAL_CONSOLE ==
+                      (enum xkb_event_type) _XKB_EVENT_TYPE_MAX,
                       "Missing state event type");
         return false;
     }
@@ -170,18 +187,22 @@ print_event(const char *prefix, const struct xkb_event *event)
 {
     fprintf(stderr, "%s", prefix);
     switch (event->type) {
-    case XKB_EVENT_TYPE_KEY_DOWN:
-    case XKB_EVENT_TYPE_KEY_REPEATED:
-    case XKB_EVENT_TYPE_KEY_UP:
+    case XKB_EVENT_TYPE_INVALID:
+        fprintf(stderr, "type: invalid\n");
+        break;
+    case XKB_EVENT_TYPE_FRAME:
+        fprintf(stderr, "type: end of frame\n");
+        break;
+    case XKB_EVENT_TYPE_KEY:
         fprintf(stderr, "type: key %s; keycode: %"PRIu32"\n",
-                (event->type == XKB_EVENT_TYPE_KEY_UP)
+                (event->key.direction == XKB_KEY_UP)
                     ? "up"
-                    : event->type == XKB_EVENT_TYPE_KEY_REPEATED
+                    : event->key.direction == XKB_KEY_REPEATED
                         ? "repeat"
                         : "down",
-                event->keycode);
+                event->key.keycode);
         break;
-    case XKB_EVENT_TYPE_COMPONENTS_CHANGE:
+    case XKB_EVENT_TYPE_STATE_COMPONENTS:
         fprintf(stderr, "type: components; changed: 0x%x\n"
                 "\tgroup: %"PRId32" %"PRId32" %"PRId32" %"PRIu32"\n"
                 "\tmods: 0x%08"PRIx32" 0x%08"PRIx32" 0x%08"PRIx32" %08"PRIx32"\n"
@@ -199,11 +220,36 @@ print_event(const char *prefix, const struct xkb_event *event)
                 event->components.components.leds,
                 event->components.components.controls);
         break;
+    case XKB_EVENT_TYPE_POINTER_MOTION:
+        fprintf(stderr,
+                "type: pointer motion; "
+                "x: %"PRId32"; y: %"PRId32"; flags: 0x%x\n",
+                event->pointer_motion.x, event->pointer_motion.y,
+                event->pointer_motion.flags);
+        break;
+    case XKB_EVENT_TYPE_POINTER_BUTTON:
+        fprintf(stderr,
+                "type: pointer button; button: %"PRIu32"; "
+                "count: %"PRIu8"; state: %"PRIu8"\n",
+                event->pointer_button.button,
+                event->pointer_button.count, event->pointer_button.state);
+        break;
+    case XKB_EVENT_TYPE_TERMINATE_DISPLAY_SERVER:
+        /* No parameters */
+        fprintf(stderr, "type: terminate server\n");
+        break;
+    case XKB_EVENT_TYPE_SWITCH_VIRTUAL_CONSOLE:
+        fprintf(stderr,
+                "type: switch virtual console; value: %"PRId8"; "
+                "offset: %d\n",
+                event->virtual_console.index_or_offset,
+                event->virtual_console.is_offset);
+        break;
     default:
         {} /* Label followed by declaration requires C23 */
-        static_assert(XKB_EVENT_TYPE_COMPONENTS_CHANGE == 4 &&
-                      XKB_EVENT_TYPE_COMPONENTS_CHANGE ==
-                      (enum xkb_event_type) _LAST_XKB_EVENT_TYPE,
+        static_assert(XKB_EVENT_TYPE_SWITCH_VIRTUAL_CONSOLE == 7 &&
+                      XKB_EVENT_TYPE_SWITCH_VIRTUAL_CONSOLE ==
+                      (enum xkb_event_type) _XKB_EVENT_TYPE_MAX,
                       "Missing state event type");
     }
 }
@@ -215,8 +261,11 @@ check_events(struct xkb_events *iter,
     const struct xkb_event *got = NULL;
     size_t got_count = 0;
     bool ok = true;
-    if (count == 1 && events[0].type == XKB_EVENT_TYPE_NONE)
+    if (count && events[0].type == XKB_EVENT_TYPE_NONE) {
+        assert((count == 1) ^
+               (count == 2 && events[1].type == XKB_EVENT_TYPE_FRAME));
         count = 0;
+    }
     while ((got = xkb_events_next(iter))) {
         if (++got_count > count) {
             fprintf(stderr, "%s() error at event #%zu:\n", __func__, got_count);

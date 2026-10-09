@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "xkbcommon/xkbcommon-status.h"
 #include "xkbcommon/xkbcommon.h"
 #include "tools-common.h"
 #include "src/utils.h"
@@ -49,6 +50,8 @@ usage(FILE *file, const char *progname)
            "General options:\n"
            " --help\n"
            "    Print this help and exit\n"
+           " --version\n"
+           "    Print version information and exit\n"
            " --verbose\n"
            "    Enable verbose debugging output\n"
            " --test\n"
@@ -69,8 +72,10 @@ usage(FILE *file, const char *progname)
            "    The keymap format to use for parsing (default: '%s')\n"
            " --format <format>\n"
            "    The keymap format to use for both parsing and serializing\n"
-           " --strict\n"
+           " --input-strict\n"
            "    Parse using the strict mode.\n"
+           " --strict\n"
+           "    Parse and serialize using the strict mode.\n"
            " --keymap <file>\n"
            " --from-xkb <file>\n"
            "    Load the corresponding XKB file, ignore RMLVO options. If <file>\n"
@@ -99,12 +104,22 @@ usage(FILE *file, const char *progname)
            "Output options:\n"
            " --output-format <format>\n"
            "    The keymap format to use for serializing (default: same as input)\n"
+           " --output-strict\n"
+           "    Serialize using the strict mode\n"
            " --no-pretty\n"
            "    Do not pretty-print when serializing a keymap\n"
            " --drop-unused\n"
            "    Disable unused bits serialization\n"
+           " --explicit-defaults\n"
+           "    Force serializing default values\n"
+           " --explicit-vmods\n"
+           "    Force serializing virtual modifiers encodings\n"
+           " --explicit-keys\n"
+           "    Force serializing key values\n"
            " --explicit-values\n"
            "    Force serializing all values\n"
+           " --layouts-mask\n"
+           "    Hexadecimal mask of the layouts indices to select for serializing\n"
            " --kccgst\n"
            "    Print a keymap which only includes the KcCGST component names instead of the full keymap\n"
            " --kccgst-yaml\n"
@@ -142,6 +157,7 @@ parse_options(int argc, char **argv,
               enum xkb_keymap_format *keymap_output_format,
               enum xkb_keymap_compile_flags *compile_flags,
               enum xkb_keymap_serialize_flags *serialize_flags,
+              xkb_layout_mask_t *layout_mask,
               bool *use_env_names,
               char **path, struct xkb_rule_names *names)
 {
@@ -158,7 +174,8 @@ parse_options(int argc, char **argv,
         OPT_ENABLE_ENV_NAMES,
         OPT_KEYMAP_INPUT_FORMAT,
         OPT_KEYMAP_FORMAT,
-        OPT_KEYMAP_STRICT_PARSER,
+        OPT_KEYMAP_INPUT_STRICT,
+        OPT_KEYMAP_STRICT,
         OPT_RULES,
         OPT_MODEL,
         OPT_LAYOUT,
@@ -166,9 +183,14 @@ parse_options(int argc, char **argv,
         OPT_OPTION,
         /* Output */
         OPT_KEYMAP_OUTPUT_FORMAT,
+        OPT_KEYMAP_OUTPUT_STRICT,
         OPT_KEYMAP_NO_PRETTY,
         OPT_KEYMAP_DROP_UNUSED,
+        OPT_KEYMAP_EXPLICIT_DEFAULTS,
+        OPT_KEYMAP_EXPLICIT_VMODS,
+        OPT_KEYMAP_EXPLICIT_KEYS,
         OPT_KEYMAP_EXPLICIT,
+        OPT_KEYMAP_LAYOUTS,
         OPT_KCCGST,
         OPT_KCCGST_YAML,
         OPT_RMLVO,
@@ -179,6 +201,7 @@ parse_options(int argc, char **argv,
          * General
          */
         {"help",             no_argument,            0, 'h'},
+        {"version",          no_argument,            0, 'V'},
         {"verbose",          no_argument,            0, OPT_VERBOSE},
         {"test",             no_argument,            0, OPT_TEST},
         /*
@@ -189,7 +212,8 @@ parse_options(int argc, char **argv,
         {"keymap",           optional_argument,      0, OPT_KEYMAP},
         /* Alias maintained for backward compatibility */
         {"from-xkb",         optional_argument,      0, OPT_KEYMAP},
-        {"strict",           no_argument,            0, OPT_KEYMAP_STRICT_PARSER},
+        {"input-strict",     no_argument,            0, OPT_KEYMAP_INPUT_STRICT},
+        {"strict",           no_argument,            0, OPT_KEYMAP_STRICT},
         {"enable-environment-names", no_argument,    0, OPT_ENABLE_ENV_NAMES},
         {"input-format",     required_argument,      0, OPT_KEYMAP_INPUT_FORMAT},
         {"format",           required_argument,      0, OPT_KEYMAP_FORMAT},
@@ -202,9 +226,14 @@ parse_options(int argc, char **argv,
          * Output
          */
         {"output-format",    required_argument,      0, OPT_KEYMAP_OUTPUT_FORMAT},
+        {"output-strict",    no_argument,            0, OPT_KEYMAP_OUTPUT_STRICT},
         {"no-pretty",        no_argument,            0, OPT_KEYMAP_NO_PRETTY},
         {"drop-unused",      no_argument,            0, OPT_KEYMAP_DROP_UNUSED},
+        {"explicit-defaults",no_argument,            0, OPT_KEYMAP_EXPLICIT_DEFAULTS},
+        {"explicit-vmods",   no_argument,            0, OPT_KEYMAP_EXPLICIT_VMODS},
+        {"explicit-keys",    no_argument,            0, OPT_KEYMAP_EXPLICIT_KEYS},
         {"explicit-values",  no_argument,            0, OPT_KEYMAP_EXPLICIT},
+        {"layouts-mask",     required_argument,      0, OPT_KEYMAP_LAYOUTS},
         {"kccgst",           no_argument,            0, OPT_KCCGST},
         {"kccgst-yaml",      no_argument,            0, OPT_KCCGST_YAML},
         {"rmlvo",            no_argument,            0, OPT_RMLVO},
@@ -216,7 +245,7 @@ parse_options(int argc, char **argv,
     int option_index = 0;
     while (1) {
         option_index = 0;
-        int c = getopt_long(argc, argv, "h", opts, &option_index);
+        int c = getopt_long(argc, argv, "hV", opts, &option_index);
         if (c == -1)
             break;
 
@@ -224,7 +253,10 @@ parse_options(int argc, char **argv,
         /* General */
         case 'h':
             usage(stdout, argv[0]);
-            exit(0);
+            exit(EXIT_SUCCESS);
+        case 'V':
+            printf("%s\n", LIBXKBCOMMON_VERSION);
+            exit(EXIT_SUCCESS);
         case OPT_VERBOSE:
             verbose = true;
             break;
@@ -291,8 +323,15 @@ parse_options(int argc, char **argv,
             }
             *keymap_output_format = *keymap_input_format;
             break;
-        case OPT_KEYMAP_STRICT_PARSER:
+        case OPT_KEYMAP_INPUT_STRICT:
             *compile_flags |= XKB_KEYMAP_COMPILE_STRICT_MODE;
+            break;
+        case OPT_KEYMAP_OUTPUT_STRICT:
+            *compile_flags |= XKB_KEYMAP_SERIALIZE_STRICT_MODE;
+            break;
+        case OPT_KEYMAP_STRICT:
+            *compile_flags |= XKB_KEYMAP_COMPILE_STRICT_MODE;
+            *serialize_flags |= XKB_KEYMAP_SERIALIZE_STRICT_MODE;
             break;
         case OPT_KEYMAP_NO_PRETTY:
             *serialize_flags &= ~XKB_KEYMAP_SERIALIZE_PRETTY;
@@ -300,9 +339,27 @@ parse_options(int argc, char **argv,
         case OPT_KEYMAP_DROP_UNUSED:
             *serialize_flags &= ~XKB_KEYMAP_SERIALIZE_KEEP_UNUSED;
             break;
-        case OPT_KEYMAP_EXPLICIT:
-            *serialize_flags |= XKB_KEYMAP_SERIALIZE_EXPLICIT;
+        case OPT_KEYMAP_EXPLICIT_DEFAULTS:
+            *serialize_flags |= XKB_KEYMAP_SERIALIZE_EXPLICIT_DEFAULT_VALUES;
             break;
+        case OPT_KEYMAP_EXPLICIT_VMODS:
+            *serialize_flags |= XKB_KEYMAP_SERIALIZE_EXPLICIT_VMODS;
+            break;
+        case OPT_KEYMAP_EXPLICIT_KEYS:
+            *serialize_flags |= XKB_KEYMAP_SERIALIZE_EXPLICIT_KEY_VALUES;
+            break;
+        case OPT_KEYMAP_EXPLICIT:
+            *serialize_flags |= XKB_KEYMAP_SERIALIZE_EXPLICIT_DEFAULT_VALUES
+                              | XKB_KEYMAP_SERIALIZE_EXPLICIT_VMODS
+                              | XKB_KEYMAP_SERIALIZE_EXPLICIT_KEY_VALUES;
+            break;
+        case OPT_KEYMAP_LAYOUTS: {
+            uint32_t mask = 0;
+            if (!tools_parse_mask(optarg, TOOLS_ARG_REQUIRED, &mask))
+                goto invalid_usage;
+            *layout_mask = mask;
+            break;
+        }
         case OPT_RULES:
             if (input_format == INPUT_FORMAT_KEYMAP)
                 goto input_format_error;
@@ -427,15 +484,21 @@ invalid_usage:
     exit(EXIT_INVALID_USAGE);
 }
 
+static const char success_text[] = "Success!";
+
 static int
 print_rmlvo(struct xkb_context *ctx, struct xkb_rule_names *rmlvo)
 {
     /* Resolve default RMLVO values */
     struct xkb_rule_names resolved = { NULL };
-    xkb_components_names_from_rules(ctx, rmlvo, &resolved, NULL);
 
-    if (test)
+    if (!xkb_components_names_from_rules(ctx, rmlvo, &resolved, NULL)) {
+        fprintf(stderr, "ERROR: failed to get RMLVO names from rules\n");
+        return EXIT_FAILURE;
+    } else if (test) {
+        fprintf(stderr, "%s\n", success_text);
         return EXIT_SUCCESS;
+    }
 
     printf("rules: \"%s\"\nmodel: \"%s\"\nlayout: \"%s\"\nvariant: \"%s\"\n"
            "options: \"%s\"\n",
@@ -448,48 +511,53 @@ print_rmlvo(struct xkb_context *ctx, struct xkb_rule_names *rmlvo)
 static int
 print_kccgst(struct xkb_context *ctx, struct xkb_rule_names *rmlvo, bool yaml)
 {
-        struct xkb_component_names kccgst = { 0 };
+    struct xkb_component_names kccgst = { 0 };
+    int rc = EXIT_SUCCESS;
 
-        /* Resolve missing RMLVO values, then resolve the RMLVO names to
-         * KcCGST components */
-        if (!xkb_components_names_from_rules(ctx, rmlvo, NULL, &kccgst))
-            return EXIT_FAILURE;
-        if (test)
-            goto out;
+    /* Resolve missing RMLVO values, then resolve the RMLVO names to
+     * KcCGST components */
+    if (!xkb_components_names_from_rules(ctx, rmlvo, NULL, &kccgst)) {
+        fprintf(stderr, "ERROR: failed to get KcCGST components from rules\n");
+        rc = EXIT_FAILURE;
+        goto out;
+    } else if (test) {
+        fprintf(stderr, "%s\n", success_text);
+        goto out;
+    }
 
-        if (yaml) {
-            printf("keycodes: \"%s\"\n"
-                   "types: \"%s\"\n"
-                   "compat: \"%s\"\n"
-                   "symbols: \"%s\"\n",
-                   kccgst.keycodes, kccgst.types, kccgst.compatibility,
-                   kccgst.symbols);
-            /* Contrary to the previous components, geometry can be empty */
-            if (!isempty(kccgst.geometry)) {
-                printf("geometry: \"%s\"\n", kccgst.geometry);
-            }
-        } else {
-            printf("xkb_keymap {\n"
-                   "  xkb_keycodes { include \"%s\" };\n"
-                   "  xkb_types { include \"%s\" };\n"
-                   "  xkb_compat { include \"%s\" };\n"
-                   "  xkb_symbols { include \"%s\" };\n",
-                   kccgst.keycodes, kccgst.types, kccgst.compatibility,
-                   kccgst.symbols);
-            /* Contrary to the previous components, geometry can be empty */
-            if (!isempty(kccgst.geometry)) {
-                printf("  xkb_geometry { include \"%s\" };\n", kccgst.geometry);
-            }
-            printf("};\n");
+    if (yaml) {
+        printf("keycodes: \"%s\"\n"
+                "types: \"%s\"\n"
+                "compat: \"%s\"\n"
+                "symbols: \"%s\"\n",
+                kccgst.keycodes, kccgst.types, kccgst.compatibility,
+                kccgst.symbols);
+        /* Contrary to the previous components, geometry can be empty */
+        if (!isempty(kccgst.geometry)) {
+            printf("geometry: \"%s\"\n", kccgst.geometry);
         }
+    } else {
+        printf("xkb_keymap {\n"
+               "  xkb_keycodes { include \"%s\" };\n"
+               "  xkb_types { include \"%s\" };\n"
+               "  xkb_compat { include \"%s\" };\n"
+               "  xkb_symbols { include \"%s\" };\n",
+               kccgst.keycodes, kccgst.types, kccgst.compatibility,
+               kccgst.symbols);
+        /* Contrary to the previous components, geometry can be empty */
+        if (!isempty(kccgst.geometry)) {
+            printf("  xkb_geometry { include \"%s\" };\n", kccgst.geometry);
+        }
+        printf("};\n");
+    }
 out:
-        free(kccgst.keycodes);
-        free(kccgst.types);
-        free(kccgst.compatibility);
-        free(kccgst.symbols);
-        free(kccgst.geometry);
+    free(kccgst.keycodes);
+    free(kccgst.types);
+    free(kccgst.compatibility);
+    free(kccgst.symbols);
+    free(kccgst.geometry);
 
-        return EXIT_SUCCESS;
+    return rc;
 }
 
 static struct xkb_keymap*
@@ -527,8 +595,7 @@ print_keymap(struct xkb_context *ctx,
              enum xkb_keymap_compile_flags compile_flags,
              enum input_format format,
              const struct xkb_rule_names *rmlvo, const char *path,
-             enum xkb_keymap_format keymap_output_format,
-             enum xkb_keymap_serialize_flags serialize_flags)
+             const struct xkb_keymap_serialize_config *config)
 {
     int ret = EXIT_SUCCESS;
     struct xkb_keymap *keymap = load_keymap(ctx, keymap_input_format,
@@ -537,16 +604,18 @@ print_keymap(struct xkb_context *ctx,
     if (!keymap) {
         fprintf(stderr, "ERROR: Couldn't create xkb keymap\n");
         ret = EXIT_FAILURE;
-    } else if (!test) {
-        char* keymap_string = xkb_keymap_get_as_string2(
-            keymap, keymap_output_format, serialize_flags
-        );
-        if (!keymap_string) {
-            fprintf(stderr, "ERROR: Couldn't get the keymap string\n");
+    } else if (test) {
+        fprintf(stderr, "%s\n", success_text);
+    } else {
+        struct xkb_keymap_serialize_result result = { .size = sizeof(result) };
+        const enum xkb_status status =
+            xkb_keymap_serialize(keymap, config, &result);
+        if (status != XKB_SUCCESS) {
+            fprintf(stderr, "ERROR %d: Couldn't get the keymap string\n", status);
             ret = EXIT_FAILURE;
         } else {
-            fputs(keymap_string, stdout);
-            free(keymap_string);
+            fputs(result.serialized, stdout);
+            free(result.serialized);
         }
     }
     xkb_keymap_unref(keymap);
@@ -566,7 +635,9 @@ print_modmaps(struct xkb_context *ctx,
     if (!keymap) {
         fprintf(stderr, "ERROR: Couldn't create xkb keymap\n");
         ret = EXIT_FAILURE;
-    } else if (!test) {
+    } else if (test) {
+        fprintf(stderr, "%s\n", success_text);
+    } else {
         print_modifiers_encodings(keymap);
         printf("\n");
         print_keys_modmaps(keymap);
@@ -590,7 +661,7 @@ main(int argc, char **argv)
         (enum xkb_keymap_compile_flags) DEFAULT_KEYMAP_COMPILE_FLAGS;
     enum xkb_keymap_serialize_flags serialize_flags =
         (enum xkb_keymap_serialize_flags) DEFAULT_KEYMAP_SERIALIZE_FLAGS;
-    int rc = 1;
+    xkb_layout_mask_t layout_mask = 0; /* all layouts by default */
 
     setlocale(LC_ALL, "");
 
@@ -603,8 +674,8 @@ main(int argc, char **argv)
     enum output_format output_format = OUTPUT_FORMAT_KEYMAP;
     if (!parse_options(argc, argv, &input_format, &output_format,
                        &keymap_input_format, &keymap_output_format,
-                       &compile_flags, &serialize_flags, &use_env_names,
-                       &keymap_path, &names))
+                       &compile_flags, &serialize_flags, &layout_mask,
+                       &use_env_names, &keymap_path, &names))
         return EXIT_INVALID_USAGE;
 
     enum xkb_context_flags ctx_flags = XKB_CONTEXT_NO_DEFAULT_INCLUDES;
@@ -612,7 +683,10 @@ main(int argc, char **argv)
         ctx_flags |= XKB_CONTEXT_NO_ENVIRONMENT_NAMES;
 
     ctx = xkb_context_new(ctx_flags);
-    assert(ctx);
+    if (!ctx) {
+        fprintf(stderr, "ERROR: cannot create xkb context\n");
+        return EXIT_FAILURE;
+    }
 
     if (verbose)
         tools_enable_verbose_logging(ctx);
@@ -628,6 +702,7 @@ main(int argc, char **argv)
             xkb_context_include_path_append(ctx, include);
     }
 
+    int rc = EXIT_FAILURE;
     switch (output_format) {
     case OUTPUT_FORMAT_RMLVO:
         assert(input_format != INPUT_FORMAT_KEYMAP);
@@ -645,10 +720,16 @@ main(int argc, char **argv)
         rc = print_modmaps(ctx, keymap_input_format,
                            compile_flags, input_format, &names, keymap_path);
         break;
-    default:
+    default: {
+        struct xkb_keymap_serialize_config config = {
+            .size = sizeof(config),
+            .flags = serialize_flags,
+            .format = keymap_output_format,
+            .layouts = layout_mask,
+        };
         rc = print_keymap(ctx, keymap_input_format, compile_flags, input_format,
-                          &names, keymap_path,
-                          keymap_output_format, serialize_flags);
+                          &names, keymap_path, &config);
+    }
     }
 
     xkb_context_unref(ctx);

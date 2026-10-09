@@ -200,7 +200,13 @@ text_v1_keymap_new_from_string(struct xkb_keymap *keymap,
     bool ok;
     XkbFile *xkb_file;
 
-    xkb_file = XkbParseString(keymap->ctx, string, len, "(input string)", NULL);
+    const struct parser_keymap_config config = {
+        .format = keymap->format,
+        .strict = parser_strict_flags_from_keymap(keymap)
+    };
+
+    xkb_file = XkbParseString(keymap->ctx, &config,
+                              string, len, "(input string)", NULL);
     if (!xkb_file) {
         log_err(keymap->ctx, XKB_ERROR_KEYMAP_COMPILATION_FAILED,
                 "Failed to parse input xkb string\n");
@@ -218,7 +224,12 @@ text_v1_keymap_new_from_file(struct xkb_keymap *keymap, FILE *file)
     bool ok;
     XkbFile *xkb_file;
 
-    xkb_file = XkbParseFile(keymap->ctx, file, "(unknown file)", NULL);
+    const struct parser_keymap_config config = {
+        .format = keymap->format,
+        .strict = parser_strict_flags_from_keymap(keymap)
+    };
+
+    xkb_file = XkbParseFile(keymap->ctx, &config, file, "(unknown file)", NULL);
     if (!xkb_file) {
         log_err(keymap->ctx, XKB_ERROR_KEYMAP_COMPILATION_FAILED,
                 "Failed to parse input xkb file\n");
@@ -235,5 +246,5 @@ const struct xkb_keymap_format_ops text_v1_keymap_format_ops = {
     .keymap_new_from_names = text_v1_keymap_new_from_names,
     .keymap_new_from_string = text_v1_keymap_new_from_string,
     .keymap_new_from_file = text_v1_keymap_new_from_file,
-    .keymap_get_as_string = text_v1_keymap_get_as_string,
+    .keymap_serialize = text_v1_keymap_serialize,
 };

@@ -1,9 +1,9 @@
-# XKB Compatibility {#xkbcommon-compatibility}
+# XKB Compatibility {#xkb-compatibility}
 
 @tableofcontents{html:2}
 
 This page presents the differences between the [XKB 1.0 specification][XKB Protocol]
-implemented in current X servers and its implementation in libxkbcommon.
+implemented in current X servers and its implementation in xkbcommon.
 
 xkbcommon has *removed* support for some parts of the specification which
 introduced unnecessary complications.  Many of these removals were in fact
@@ -30,8 +30,8 @@ Please [report any issue](https://github.com/xkbcommon/libxkbcommon/issues).
 <tr>
 <th colspan="2">Feature</th>
 <th>X11</th>
-<th>xkbcommon ([v1 format](@ref XKB_KEYMAP_FORMAT_TEXT_V1))</th>
-<th>xkbcommon ([v2 format](@ref XKB_KEYMAP_FORMAT_TEXT_V2))</th>
+<th>xkbcommon [v1 format](@ref XKB_KEYMAP_FORMAT_TEXT_V1)</th>
+<th>xkbcommon [v2 format](@ref XKB_KEYMAP_FORMAT_TEXT_V2)</th>
 </tr>
 </thead>
 <tbody>
@@ -47,7 +47,7 @@ Wayland support requires the XWayland compatibility layer.
 <td colspan="2">
 <details>
 <summary>✅ Full support</summary>
-libxkbcommon is the *reference* implementation of the keyboard keymap handling
+xkbcommon is the *reference* implementation of the keyboard keymap handling
 (parsing/serializing, state) for Wayland.
 </details>
 </td>
@@ -324,8 +324,8 @@ the [corresponding actions](@ref compatibility-key-actions).
 <td>
 <details>
 <summary>⚠️ Partial support (since 1.14)</summary>
-- libxkbcommon \< 1.14: Parsing overlays 1-2 only.
-- libxkbcommon ≥ 1.14: Supported. Note that the API support requires using
+- xkbcommon \< 1.14: Parsing overlays 1-2 only.
+- xkbcommon ≥ 1.14: Supported. Note that the API support requires using
   the `xkb_machine` API.
   - Only **2** overlays
   - [Disjoint overlays][Overlapping overlays]
@@ -334,8 +334,8 @@ the [corresponding actions](@ref compatibility-key-actions).
 <td>
 <details>
 <summary>✅ Full support (since 1.14)</summary>
-- libxkbcommon \< 1.14: Parsing overlays 1-2 only.
-- libxkbcommon ≥ 1.14: Full support. Note that the API support requires using
+- xkbcommon \< 1.14: Parsing overlays 1-2 only.
+- xkbcommon ≥ 1.14: Full support. Note that the API support requires using
   the `xkb_machine` API.
   - **8** overlays
   - [Overlapping overlays]
@@ -399,9 +399,9 @@ Rational:
 </table>
 
 [Indicator behaviors]: https://www.x.org/releases/current/doc/kbproto/xkbproto.html#:~:text=IM_LEDDrivesKB
-[Overlay1]: @ref XKB_KEYBOARD_CONTROL_OVERLAY1
-[Overlay2]: @ref XKB_KEYBOARD_CONTROL_OVERLAY2
-[Overlay8]: @ref XKB_KEYBOARD_CONTROL_OVERLAY8
+[Overlay1]: @ref overlay-1
+[Overlay2]: @ref overlay-2
+[Overlay8]: @ref overlay-8
 [Overlapping overlays]: @ref overlapping-overlays
 
 
@@ -414,8 +414,8 @@ Rational:
 <th>Type</th>
 <th>Action</th>
 <th>X11</th>
-<th>xkbcommon ([v1 format](@ref XKB_KEYMAP_FORMAT_TEXT_V1))</th>
-<th>xkbcommon ([v2 format](@ref XKB_KEYMAP_FORMAT_TEXT_V2))</th>
+<th>xkbcommon [v1 format](@ref XKB_KEYMAP_FORMAT_TEXT_V1)</th>
+<th>xkbcommon [v2 format](@ref XKB_KEYMAP_FORMAT_TEXT_V2)</th>
 </tr>
 </thead>
 <tbody>
@@ -546,8 +546,8 @@ Rational:
 <td colspan="2">
 <details>
 <summary>⚠️ Partial support</summary>
-- libxkbcommon \< 1.14: Parsing and serializing only, no API support
-- libxkbcommon ≥ 1.14: API support for a limited number of controls:
+- xkbcommon \< 1.14: Parsing and serializing only, no API support
+- xkbcommon ≥ 1.14: API support for a limited number of controls:
   see `xkb_keyboard_control_flags`.
 </details>
 </td>
@@ -558,8 +558,8 @@ Rational:
 <td colspan="2">
 <details>
 <summary>⚠️ Partial support</summary>
-- libxkbcommon \< 1.14: Parsing and serializing only, no API support
-- libxkbcommon ≥ 1.14: API support for a limited number of controls:
+- xkbcommon \< 1.14: Parsing and serializing only, no API support
+- xkbcommon ≥ 1.14: API support for a limited number of controls:
   see `xkb_keyboard_control_flags`.
 </details>
 </td>
@@ -578,45 +578,91 @@ parameter is not supported: the default value is 0, an invalid X11 keycode.
 <td colspan="2">
 <details>
 <summary>✅ Full support (since 1.14)</summary>
-- libxkbcommon \< 1.14: Parsing only.
-- libxkbcommon ≥ 1.14: Full support. Note that the API support requires using
+- xkbcommon \< 1.14: Parsing only.
+- xkbcommon ≥ 1.14: Full support. Note that the API support requires using
   the `xkb_machine` API.
+</details>
+</td>
+</tr>
+<!-- Keyboard emulation actions -->
+<tr>
+<th rowspan="4">Mouse emulation</th>
+<th>[`MovePointer()`](@ref move-pointer-action)</th>
+<td>✅ Full support</td>
+<td colspan="2">
+<details>
+<summary>✅ Full support (since 1.14)</summary>
+- xkbcommon \< 1.14: Parsing and serializing only, no API support.
+- xkbcommon ≥ 1.14: Full support. Note that the API support requires using
+  the `xkb_machine` API.
+</details>
+</td>
+</tr>
+<tr>
+<th>[`PointerButton()`](@ref pointer-button-action)</th>
+<td>✅ Full support</td>
+<td colspan="2">
+<details>
+<summary>✅ Full support (since 1.14)</summary>
+- xkbcommon \< 1.14: Parsing and serializing only, no API support.
+- xkbcommon ≥ 1.14: Full support. Note that the API support requires using
+  the `xkb_machine` API.
+</details>
+</td>
+</tr>
+<tr>
+<th>[`LockPointerButton()`](@ref pointer-lock-button-action)</th>
+<td>✅ Full support</td>
+<td colspan="2">
+<details>
+<summary>✅ Full support (since 1.14)</summary>
+- xkbcommon \< 1.14: Parsing and serializing only, no API support.
+- xkbcommon ≥ 1.14: Full support. Note that the API support requires using
+  the `xkb_machine` API.
+</details>
+</td>
+</tr>
+<tr>
+<th>[`SetPointerDefault()`](@ref pointer-set-default-button)</th>
+<td>✅ Full support</td>
+<td colspan="2">
+<details>
+<summary>✅ Full support (since 1.14)</summary>
+- xkbcommon \< 1.14: Parsing and serializing only, no API support.
+- xkbcommon ≥ 1.14: Full support. Note that the API support requires using
+  the `xkb_machine` API.
+</details>
+</td>
+</tr>
+<!-- Display server actions -->
+<tr>
+<th rowspan="2">Display server actions</th>
+<th>[`TerminateServer()`](@ref terminate-server-action)</th>
+<td>✅ Full support</td>
+<td colspan="2">
+<details>
+<summary>✅ Full support (since 1.14)</summary>
+- xkbcommon \< 1.14: Parsing and serializing only, no API support.
+- xkbcommon ≥ 1.14: Full support. Note that the API support requires using
+  the `xkb_machine` API and enabling `::XKB_MACHINE_SERVER_ACTIONS`.
+</details>
+</td>
+</tr>
+<tr>
+<th>[`SwitchScreen()`](@ref switch-screen-action)</th>
+<td>✅ Full support</td>
+<td colspan="2">
+<details>
+<summary>✅ Full support (since 1.14)</summary>
+- xkbcommon \< 1.14: Parsing and serializing only, no API support.
+- xkbcommon ≥ 1.14: Full support. Note that the API support requires using
+  the `xkb_machine` API and enabling `::XKB_MACHINE_SERVER_ACTIONS`.
 </details>
 </td>
 </tr>
 <!-- Legacy actions -->
 <tr>
-<th rowspan="7">Legacy action</th>
-<th>`MovePointer()`</th>
-<td>✅ Full support</td>
-<td colspan="2">⚠️ Parsing and serializing only, no API support</td>
-</tr>
-<tr>
-<th>`PointerButton()`</th>
-<td>✅ Full support</td>
-<td colspan="2">⚠️ Parsing and serializing only, no API support</td>
-</tr>
-<tr>
-<th>`LockPointerButton()`</th>
-<td>✅ Full support</td>
-<td colspan="2">⚠️ Parsing and serializing only, no API support</td>
-</tr>
-<tr>
-<th>`SetPointerDefault()`</th>
-<td>✅ Full support</td>
-<td colspan="2">⚠️ Parsing and serializing only, no API support</td>
-</tr>
-<tr>
-<th>`TerminateServer()`</th>
-<td>✅ Full support</td>
-<td colspan="2">⚠️ Parsing and serializing only, no API support</td>
-</tr>
-<tr>
-<th>`SwitchScreen()`</th>
-<td>✅ Full support</td>
-<td colspan="2">⚠️ Parsing and serializing only, no API support</td>
-</tr>
-<tr>
+<th rowspan="1">Legacy action</th>
 <th>`Private()`</th>
 <td>✅ Full support</td>
 <td colspan="2">⚠️ Parsing and serializing only, no API support</td>
@@ -660,8 +706,8 @@ parameter is not supported: the default value is 0, an invalid X11 keycode.
 <tr>
 <th>Feature</th>
 <th>X11 (xkbcomp)</th>
-<th>xkbcommon ([v1 format](@ref XKB_KEYMAP_FORMAT_TEXT_V1))</th>
-<th>xkbcommon ([v2 format](@ref XKB_KEYMAP_FORMAT_TEXT_V2))</th>
+<th>xkbcommon [v1 format](@ref XKB_KEYMAP_FORMAT_TEXT_V1)</th>
+<th>xkbcommon [v2 format](@ref XKB_KEYMAP_FORMAT_TEXT_V2)</th>
 </tr>
 </thead>
 <tbody>
@@ -728,7 +774,7 @@ See @ref keymap-string-literal "string literal" for further information.
 <td colspan="2">
 <details>
 <summary>✅ Full support (since 1.14)</summary>
-Enable to define e.g. a proper interpretation entry of the keysym `ISO_Last_Group`:
+Enable defining e.g. a proper interpretation entry of the keysym `ISO_Last_Group`:
 
 ```c
 interpret ISO_Last_Group {
@@ -741,7 +787,7 @@ Note that contrary to `First`, `Last` cannot be used as an *array* index, i.e.
 <!-- NOTE: It may only work if using the RMLVO API with *one* layout -->
 
 These constants are parsed but never used for *serialization*, in order to
-maintain compatibility with xkbcomp and older libxkbcommon versions.
+maintain compatibility with xkbcomp and older xkbcommon versions.
 </details>
 </td>
 </tr>
@@ -856,8 +902,8 @@ Multiple groups per symbol section is supported when parsing a [KcCGST] keymap.
 <tr>
 <th>Feature</th>
 <th>X11</th>
-<th>xkbcommon ([v1 format](@ref XKB_KEYMAP_FORMAT_TEXT_V1))</th>
-<th>xkbcommon ([v2 format](@ref XKB_KEYMAP_FORMAT_TEXT_V2))</th>
+<th>xkbcommon [v1 format](@ref XKB_KEYMAP_FORMAT_TEXT_V1)</th>
+<th>xkbcommon [v2 format](@ref XKB_KEYMAP_FORMAT_TEXT_V2)</th>
 </tr>
 </thead>
 <tbody>
@@ -913,8 +959,8 @@ Obsolete legacy file format tied to X11 ecosystem.
 <tr>
 <th>Feature</th>
 <th>X11</th>
-<th>xkbcommon ([v1 format](@ref XKB_KEYMAP_FORMAT_TEXT_V1))</th>
-<th>xkbcommon ([v2 format](@ref XKB_KEYMAP_FORMAT_TEXT_V2))</th>
+<th>xkbcommon [v1 format](@ref XKB_KEYMAP_FORMAT_TEXT_V1)</th>
+<th>xkbcommon [v2 format](@ref XKB_KEYMAP_FORMAT_TEXT_V2)</th>
 </tr>
 </thead>
 <tbody>

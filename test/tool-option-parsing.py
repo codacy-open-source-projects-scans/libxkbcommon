@@ -400,10 +400,16 @@ class TestXkbcli(unittest.TestCase):
             ["--format=v2", "-h"],
             ["--input-format=xkb_v1", "-h"],
             ["--output-format=xkb_v2", "-h"],
+            ["--input-strict", "-h"],
+            ["--output-strict", "-h"],
             ["--strict", "-h"],
             ["--no-pretty", "-h"],
             ["--drop-unused", "-h"],
+            ["--explicit-defaults", "-h"],
+            ["--explicit-vmods", "-h"],
+            ["--explicit-keys", "-h"],
             ["--explicit-values", "-h"],
+            ["--layouts-mask", "0x1", "-h"],
         ):
             with self.subTest(args=args):
                 self.xkbcli_compile_keymap.run_command_success(args)
@@ -685,7 +691,7 @@ class TestXkbcli(unittest.TestCase):
             ["--legacy-state-api", "-h"],
             ["--legacy-state-api=false", "-h"],
             ["--legacy-state-api=true", "-h"],
-            ["--controls=+sticky-keys,-latch-to-lock", "-h"],
+            ["--controls=+sticky-keys,-sticky-keys-latch-to-lock", "-h"],
             ["--modifiers-mapping=Control+Alt:Level3", "-h"],
             ["--shortcuts-mask=Control+Alt+Super", "-h"],
             ["--shortcuts-mapping=2:1", "-h"],
@@ -708,7 +714,7 @@ class TestXkbcli(unittest.TestCase):
             ["--legacy-state-api", "-h"],
             ["--legacy-state-api=false", "-h"],
             ["--legacy-state-api=true", "-h"],
-            ["--controls=+sticky-keys,-latch-to-lock", "-h"],
+            ["--controls=+sticky-keys,-sticky-keys-latch-to-lock", "-h"],
             ["--modifiers-mapping=Control+Alt:Level3", "-h"],
             ["--shortcuts-mask=Control+Alt+Super", "-h"],
             ["--shortcuts-mapping=2:1", "-h"],
@@ -731,7 +737,7 @@ class TestXkbcli(unittest.TestCase):
             ["--legacy-state-api", "-h"],
             ["--legacy-state-api=false", "-h"],
             ["--legacy-state-api=true", "-h"],
-            ["--controls=+sticky-keys,-latch-to-lock", "-h"],
+            ["--controls=+sticky-keys,-sticky-keys-latch-to-lock", "-h"],
             ["--modifiers-mapping=Control+Alt:Level3", "-h"],
             ["--shortcuts-mask=Control+Alt+Super", "-h"],
             ["--shortcuts-mapping=2:1", "-h"],
@@ -746,7 +752,6 @@ class TestXkbcli(unittest.TestCase):
             ["--strict", "-h"],
             ["--no-pretty", "-h"],
             ["--drop-unused", "-h"],
-            ["--explicit-values", "-h"],
         ):
             with self.subTest(args=args):
                 self.xkbcli_dump_keymap_wayland.run_command_success(args)
@@ -755,10 +760,8 @@ class TestXkbcli(unittest.TestCase):
         for args in (
             ["--verbose", "-h"],
             ["--format=v2", "-h"],
-            ["--strict", "-h"],
             ["--no-pretty", "-h"],
             ["--drop-unused", "-h"],
-            ["--explicit-values", "-h"],
         ):
             with self.subTest(args=args):
                 self.xkbcli_dump_keymap_x11.run_command_success(args)

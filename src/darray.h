@@ -7,7 +7,7 @@
 #include "config.h"
 
 /* Originally taken from: https://ccodearchive.net/info/darray.html
- * But modified for libxkbcommon. */
+ * But modified for xkbcommon. */
 
 #include <stdlib.h>
 #include <string.h>
@@ -84,6 +84,12 @@ typedef darray (unsigned long)  darray_ulong;
 #define darray_items(arr)       ((arr).item)
 #define darray_size(arr)        ((arr).size)
 #define darray_empty(arr)       ((arr).size == 0)
+
+#define darray_last(arr, fallback) ( \
+    !(arr).size \
+        ? (fallback) \
+        : (arr).item[(arr).size - 1] \
+)
 
 /*** Insertion (single item) ***/
 
@@ -251,5 +257,11 @@ darray_next_alloc(darray_size_t alloc, darray_size_t need, size_t itemSize)
 #define darray_foreach_reverse(i, arr) \
     if ((arr).item && (arr).size) \
     for ((i) = &(arr).item[(arr).size - 1]; \
-         (arr).size > 0 && (i) >= &(arr).item[0]; \
+         (i) >= &(arr).item[0]; \
          (i)--)
+
+#define darray_enumerate_reverse(idx, val, arr) \
+    if ((arr).item && (arr).size) \
+    for ((idx) = (arr).size - 1, (val) = &(arr).item[(arr).size - 1]; \
+         (val) >= &(arr).item[0]; \
+         (idx)--, (val)--)

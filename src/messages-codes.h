@@ -57,7 +57,9 @@ enum xkb_log_verbosity {
  * @name Codes of the log messages
  */
 enum xkb_message_code {
-    _XKB_LOG_MESSAGE_MIN_CODE = 34,
+    _XKB_LOG_MESSAGE_MIN_CODE = 21,
+    /** XKB section is deprecated */
+    XKB_WARNING_DEPRECATED_SECTION = 21,
     /** Warn on malformed number literals */
     XKB_ERROR_MALFORMED_NUMBER_LITERAL = 34,
     /** Conflicting “preserve” entries in a key type */
@@ -70,14 +72,20 @@ enum xkb_message_code {
     XKB_ERROR_EXPECTED_ARRAY_ENTRY = 77,
     /** Invalid numeric keysym */
     XKB_ERROR_INVALID_NUMERIC_KEYSYM = 82,
+    /** Unsupported `xkb_state_mode` value */
+    XKB_ERROR_UNSUPPORTED_STATE_MODE_ = 86,
     /** Illegal keycode alias with the name of a real key */
     XKB_WARNING_ILLEGAL_KEYCODE_ALIAS = 101,
     /** Warn on unrecognized keysyms */
     XKB_WARNING_UNRECOGNIZED_KEYSYM = 107,
+    /** Event getter does not match the event’s type */
+    XKB_ERROR_EVENT_TYPE_MISMATCH_ = 113,
     /** A virtual modifier is used before being declared */
     XKB_ERROR_UNDECLARED_VIRTUAL_MODIFIER = 123,
     /** A buffer has an insufficient size */
     XKB_ERROR_INSUFFICIENT_BUFFER_SIZE = 134,
+    /** Unsupported `xkb_keymap_key_iterator_flags` value */
+    XKB_ERROR_UNSUPPORTED_KEY_ITERATOR_FLAGS_ = 138,
     /** The type of the statement is not allowed in the context */
     XKB_ERROR_WRONG_STATEMENT_TYPE = 150,
     /** The given path is invalid */
@@ -106,6 +114,10 @@ enum xkb_message_code {
     XKB_ERROR_INVALID_SET_DEFAULT_STATEMENT = 254,
     /** Conflicting “map” entries in type definition */
     XKB_WARNING_CONFLICTING_KEY_TYPE_MAP_ENTRY = 266,
+    /** Unsupported keymap format */
+    XKB_ERROR_UNSUPPORTED_KEYMAP_FORMAT_ = 277,
+    /** Unrecognized RMLVO value ignored */
+    XKB_ERROR_UNRECOGNIZED_RMLVO_VALUE = 282,
     /** Warn if using an undefined key type */
     XKB_WARNING_UNDEFINED_KEY_TYPE = 286,
     /** A keysym has been deprecated: consider using an alternative keysym */
@@ -124,6 +136,8 @@ enum xkb_message_code {
     XKB_ERROR_OVERLAPPING_OVERLAY = 355,
     /** Use of a legacy X11 action that is not supported */
     XKB_WARNING_UNSUPPORTED_LEGACY_ACTION = 362,
+    /** Layout count limit exceeded for the corresponding keymap format */
+    XKB_ERROR_LAYOUT_COUNT_LIMIT_EXCEEDED_ = 366,
     /** Unsupported `xkb_a11y_flags` value */
     XKB_ERROR_UNSUPPORTED_A11Y_FLAGS_ = 371,
     /** An entry is duplicated and will be ignored */
@@ -140,6 +154,8 @@ enum xkb_message_code {
     XKB_WARNING_MISSING_DEFAULT_SECTION = 433,
     /** ABI struct size check failed */
     XKB_ERROR_ABI_INVALID_STRUCT_SIZE_ = 450,
+    /** Invalid real modifier mask in modifier map definition */
+    XKB_ERROR_INVALID_MODIFIER_MAP_MASK = 453,
     /** Warn if there are conflicting keysyms while merging keys */
     XKB_WARNING_CONFLICTING_KEY_SYMBOL = 461,
     /** The operation is invalid in the context */
@@ -150,10 +166,12 @@ enum xkb_message_code {
     XKB_WARNING_EXTRA_SYMBOLS_IGNORED = 516,
     /** Conflicting definitions of a key name or alias */
     XKB_WARNING_CONFLICTING_KEY_NAME = 523,
+    /** Invalid keycode */
+    XKB_ERROR_INVALID_KEYCODE_ = 538,
     /** Invalid file encoding */
     XKB_ERROR_INVALID_FILE_ENCODING = 542,
     /** Cannot allocate memory */
-    XKB_ERROR_ALLOCATION_ERROR = 550,
+    XKB_ERROR_ALLOCATION_FAILURE_ = 550,
     /** Unknown or unsupported action field */
     XKB_ERROR_INVALID_ACTION_FIELD = 563,
     /** Warn when a field has not the expected type */
@@ -164,6 +182,8 @@ enum xkb_message_code {
     XKB_ERROR_CANNOT_RESOLVE_RMLVO = 595,
     /** Invalid Unicode escape sequence */
     XKB_WARNING_INVALID_UNICODE_ESCAPE_SEQUENCE = 607,
+    /** Unsupported `xkb_events_flags` value */
+    XKB_ERROR_UNSUPPORTED_EVENTS_FLAGS_ = 611,
     /** Invalid _real_ modifier */
     XKB_ERROR_INVALID_REAL_MODIFIER = 623,
     /** Unable to add any default include path */
@@ -186,6 +206,8 @@ enum xkb_message_code {
     XKB_WARNING_UNSUPPORTED_SYMBOLS_FIELD = 711,
     /** The keymap has features unsupported in the target format */
     XKB_ERROR_INCOMPATIBLE_KEYMAP_TEXT_FORMAT = 742,
+    /** Unsupported `xkb_machine_flags` value */
+    XKB_ERROR_UNSUPPORTED_MACHINE_FLAGS_ = 755,
     /** Cannot expand `%%i`: missing layout or variant in MLVO rule fields */
     XKB_ERROR_RULES_INVALID_LAYOUT_INDEX_PERCENT_EXPANSION = 762,
     /** The XKB syntax is invalid and the file cannot be parsed */
@@ -202,6 +224,8 @@ enum xkb_message_code {
     XKB_ERROR_UNKNOWN_FIELD = 812,
     /** Keymap compilation failed */
     XKB_ERROR_KEYMAP_COMPILATION_FAILED = 822,
+    /** Unsupported keymap serialization flags */
+    XKB_ERROR_UNSUPPORTED_KEYMAP_SERIALIZATION_FLAGS_ = 829,
     /** Unknown action type */
     XKB_ERROR_UNKNOWN_ACTION_TYPE = 844,
     /** ABI forward-compatibility check failed */
@@ -210,12 +234,16 @@ enum xkb_message_code {
     XKB_WARNING_CONFLICTING_KEY_ACTION = 883,
     /** Warn if there are conflicting key types while merging groups */
     XKB_WARNING_CONFLICTING_KEY_TYPE_MERGING_GROUPS = 893,
+    /** Unsupported `xkb_machine_builder_flags` value */
+    XKB_ERROR_UNSUPPORTED_MACHINE_BUILDER_FLAGS_ = 899,
     /** Conflicting symbols entry for a key */
     XKB_ERROR_CONFLICTING_KEY_SYMBOLS_ENTRY = 901,
     /** Missing group index in a group name entry */
     XKB_WARNING_MISSING_SYMBOLS_GROUP_NAME_INDEX = 903,
     /** ABI backward-compatibility check failed */
     XKB_ERROR_ABI_BACKWARD_COMPAT_ = 914,
+    /** Invalid section flag */
+    XKB_ERROR_UNKNOWN_SECTION_FLAG = 917,
     /** Warn if there are conflicting fields in the key definition or while merging keys */
     XKB_WARNING_CONFLICTING_KEY_FIELDS = 935,
     /** An identifier is used but is not built-in */

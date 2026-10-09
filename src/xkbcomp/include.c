@@ -20,7 +20,7 @@
 #include "xkbcomp-priv.h"
 #include "include.h"
 #include "scanner-utils.h"
-#include "utils-paths.h"
+#include "util-paths.h"
 
 /**
  * Parse an include statement. Each call returns a file name, along with
@@ -376,7 +376,9 @@ ExceedsIncludeMaxDepth(struct xkb_context *ctx, unsigned int include_depth)
 }
 
 XkbFile *
-ProcessIncludeFile(struct xkb_context *ctx, const IncludeStmt *stmt,
+ProcessIncludeFile(struct xkb_context *ctx,
+                   const struct parser_keymap_config *config,
+                   const IncludeStmt *stmt,
                    enum xkb_file_type file_type, char *path, size_t path_size)
 {
     /*
@@ -440,7 +442,7 @@ ProcessIncludeFile(struct xkb_context *ctx, const IncludeStmt *stmt,
     }
 
     while (file) {
-        xkb_file = XkbParseFile(ctx, file, stmt->file, stmt->map);
+        xkb_file = XkbParseFile(ctx, config, file, stmt->file, stmt->map);
         fclose(file);
 
         if (xkb_file) {
@@ -452,7 +454,7 @@ ProcessIncludeFile(struct xkb_context *ctx, const IncludeStmt *stmt,
                         xkb_file_type_to_string(xkb_file->file_type), stmt->file);
                 FreeXkbFile(xkb_file);
                 xkb_file = NULL;
-            } else if (stmt->map || (xkb_file->flags && MAP_IS_DEFAULT)) {
+            } else if (stmt->map || (xkb_file->flags & MAP_IS_DEFAULT)) {
                 /*
                  * Exact match: explicit map name or explicit default map.
                  * Lookup stops here.

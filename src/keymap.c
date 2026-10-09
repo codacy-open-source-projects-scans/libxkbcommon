@@ -15,13 +15,19 @@
 
 #include <assert.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "xkbcommon/xkbcommon.h"
+#include "abi-check.h"
 #include "atom.h"
+#include "context.h"
 #include "features/enums.h"
 #include "keymap.h"
+#include "keymap-priv.h"
 #include "messages-codes.h"
 #include "text.h"
+#include "util-mem.h"
+#include "util-numbers.h"
 
 struct xkb_keymap *
 xkb_keymap_ref(struct xkb_keymap *keymap)
@@ -86,6 +92,7 @@ xkb_keymap_unref(struct xkb_keymap *keymap)
         clear_interpret(&keymap->sym_interprets[k]);
     }
     free(keymap->sym_interprets);
+    free(keymap->modmaps);
     free(keymap->key_aliases);
     free(keymap->group_names);
     free(keymap->keycodes_section_name);
@@ -117,7 +124,7 @@ xkb_keymap_new_from_rmlvo(const struct xkb_rmlvo_builder *rmlvo,
 {
     const struct xkb_keymap_format_ops *ops = get_keymap_format_ops(format);
     if (!ops || !ops->keymap_new_from_rmlvo) {
-        log_err_func(rmlvo->ctx, XKB_LOG_MESSAGE_NO_ID,
+        log_err_func(rmlvo->ctx, XKB_ERROR_UNSUPPORTED_KEYMAP_FORMAT_,
                      "unsupported keymap format: %d\n", format);
         return NULL;
     }
@@ -143,7 +150,7 @@ xkb_keymap_new_from_names2(struct xkb_context *ctx,
 {
     const struct xkb_keymap_format_ops *ops = get_keymap_format_ops(format);
     if (!ops || !ops->keymap_new_from_names) {
-        log_err_func(ctx, XKB_LOG_MESSAGE_NO_ID,
+        log_err_func(ctx, XKB_ERROR_UNSUPPORTED_KEYMAP_FORMAT_,
                      "unsupported keymap format: %d\n", format);
         return NULL;
     }
@@ -193,7 +200,7 @@ xkb_keymap_new_from_buffer(struct xkb_context *ctx,
 {
     const struct xkb_keymap_format_ops *ops = get_keymap_format_ops(format);
     if (!ops || !ops->keymap_new_from_string) {
-        log_err_func(ctx, XKB_LOG_MESSAGE_NO_ID,
+        log_err_func(ctx, XKB_ERROR_UNSUPPORTED_KEYMAP_FORMAT_,
                      "unsupported keymap format: %d\n", format);
         return NULL;
     }
@@ -228,7 +235,7 @@ xkb_keymap_new_from_file(struct xkb_context *ctx,
 {
     const struct xkb_keymap_format_ops *ops = get_keymap_format_ops(format);
     if (!ops || !ops->keymap_new_from_file) {
-        log_err_func(ctx, XKB_LOG_MESSAGE_NO_ID,
+        log_err_func(ctx, XKB_ERROR_UNSUPPORTED_KEYMAP_FORMAT_,
                      "unsupported keymap format: %d\n", format);
         return NULL;
     }
@@ -251,33 +258,133 @@ xkb_keymap_new_from_file(struct xkb_context *ctx,
     return keymap;
 }
 
+/** Check ABI compatibility */
+// NOLINTBEGIN(bugprone-assignment-in-selection-statement)
+static enum xkb_status
+check_keymap_serialize_abi(
+    struct xkb_context * restrict ctx,
+    const char * restrict func,
+    const struct xkb_keymap_serialize_config * restrict config,
+    const struct xkb_keymap_serialize_result * restrict result
+)
+{
+    enum xkb_status status;
+    if ((status = xkb_check_keymap_abi(config)) ||
+        (status = xkb_check_keymap_abi(result))) {
+        xkb_log_abi_error(ctx, func, status);
+    }
+    return status;
+}
+// NOLINTEND(bugprone-assignment-in-selection-statement)
+
+enum xkb_status
+xkb_keymap_serialize(const struct xkb_keymap *keymap,
+                     const struct xkb_keymap_serialize_config *config,
+                     struct xkb_keymap_serialize_result *result)
+{
+    /* Check ABI compatibility */
+    const enum xkb_status status =
+        check_keymap_serialize_abi(keymap->ctx, __func__, config, result);
+    if (status != XKB_SUCCESS)
+        return status;
+
+    struct xkb_keymap_serialize_config new_config = *config;
+
+    const enum xkb_keymap_serialize_flags invalid_flags = (
+        new_config.flags &
+        ~(enum xkb_keymap_serialize_flags)XKB_KEYMAP_SERIALIZE_FLAGS_VALUES
+    );
+    if (invalid_flags) {
+        log_err_func(keymap->ctx,
+                     XKB_ERROR_UNSUPPORTED_KEYMAP_SERIALIZATION_FLAGS_,
+                     "unrecognized serialization flags: %#x\n",
+                     invalid_flags);
+        return XKB_ERROR_UNSUPPORTED_KEYMAP_SERIALIZATION_FLAGS;
+    }
+
+    if (new_config.format == XKB_KEYMAP_USE_ORIGINAL_FORMAT)
+        new_config.format = keymap->format;
+
+    const struct xkb_keymap_format_ops * const ops =
+        get_keymap_format_ops(new_config.format);
+    if (!ops || !ops->keymap_serialize) {
+        log_err_func(keymap->ctx, XKB_ERROR_UNSUPPORTED_KEYMAP_FORMAT_,
+                     "unsupported keymap format: %d\n", new_config.format);
+        return XKB_ERROR_UNSUPPORTED_KEYMAP_FORMAT;
+    }
+
+    const xkb_layout_mask_t all_layouts =
+        (xkb_layout_mask_t)((UINT64_C(1) << keymap->num_groups) - 1);
+    if (!new_config.layouts) {
+        new_config.layouts = all_layouts;
+    }
+
+    if (new_config.layouts & ~all_layouts) {
+        log_err_func(keymap->ctx, XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX_,
+                     "unsupported layout mask: "
+                     "expected subset of 0x%08"PRIx32", got: 0x%08"PRIx32"\n",
+                     all_layouts, new_config.layouts);
+        return XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX;
+    }
+
+    const xkb_layout_index_t max_groups = format_max_groups(config->format);
+    const xkb_layout_index_t num_groups =
+        (xkb_layout_index_t)popcount32(new_config.layouts);
+
+    if (num_groups > max_groups) {
+        const bool strict =
+            (new_config.flags & XKB_KEYMAP_SERIALIZE_STRICT_MODE);
+        xkb_log_with_code(
+            keymap->ctx,
+            (strict ? XKB_LOG_LEVEL_ERROR : XKB_LOG_LEVEL_WARNING),
+            XKB_LOG_VERBOSITY_MINIMAL,
+            XKB_ERROR_LAYOUT_COUNT_LIMIT_EXCEEDED_,
+            "Cannot serialize %"PRIu32" groups in keymap format %d: "
+            "maximum is %"PRIu32"%s\n",
+            num_groups, config->format, max_groups,
+            (strict ? "" : "; discarding unsupported groups")
+        );
+        if (strict) {
+            return XKB_ERROR_LAYOUT_COUNT_LIMIT_EXCEEDED;
+        } else {
+            new_config.layouts =
+                keep_lowest_n_set_bits(new_config.layouts, max_groups);
+        }
+    }
+
+    log_dbg(keymap->ctx, XKB_LOG_MESSAGE_NO_ID,
+            "Serializing group mask 0x%"PRIx32" (total: %"PRIu32")\n",
+            new_config.layouts, num_groups);
+
+    if (new_config.layouts != all_layouts) {
+        /*
+         * If some layouts are discarded, then interprets may not trigger
+         * properly. Avoid this by requiring explicit values.
+         */
+        new_config.flags |= (XKB_KEYMAP_SERIALIZE_EXPLICIT_KEY_VALUES |
+                             XKB_KEYMAP_SERIALIZE_EXPLICIT_VMODS);
+    }
+
+    return ops->keymap_serialize(keymap, &new_config, result);
+}
+
 char *
 xkb_keymap_get_as_string2(struct xkb_keymap *keymap,
                           enum xkb_keymap_format format,
                           enum xkb_keymap_serialize_flags flags)
 {
-    static const enum xkb_keymap_serialize_flags XKB_KEYMAP_SERIALIZE_FLAGS
-        = (enum xkb_keymap_serialize_flags) XKB_KEYMAP_SERIALIZE_FLAGS_VALUES;
+    const struct xkb_keymap_serialize_config config = {
+        .size = sizeof(config),
+        .flags = flags,
+        .format = format,
+        .layouts = 0,
+    };
 
-    if (flags & ~XKB_KEYMAP_SERIALIZE_FLAGS) {
-        log_err_func(keymap->ctx, XKB_LOG_MESSAGE_NO_ID,
-                     "unrecognized serialization flags: %#x\n",
-                     (flags & ~XKB_KEYMAP_SERIALIZE_FLAGS));
-        return NULL;
-    }
+    struct xkb_keymap_serialize_result result = { .size = sizeof(result) };
 
-    if (format == XKB_KEYMAP_USE_ORIGINAL_FORMAT)
-        format = keymap->format;
-
-    const struct xkb_keymap_format_ops * const ops =
-        get_keymap_format_ops(format);
-    if (!ops || !ops->keymap_get_as_string) {
-        log_err_func(keymap->ctx, XKB_LOG_MESSAGE_NO_ID,
-                     "unsupported keymap format: %d\n", format);
-        return NULL;
-    }
-
-    return ops->keymap_get_as_string(keymap, format, flags);
+    return (xkb_keymap_serialize(keymap, &config, &result) == XKB_SUCCESS)
+        ? result.serialized
+        : NULL;
 }
 
 char *
@@ -410,10 +517,7 @@ xkb_keymap_num_levels_for_key(struct xkb_keymap *keymap, xkb_keycode_t kc,
     if (!key)
         return 0;
 
-    static_assert(XKB_MAX_GROUPS < INT32_MAX, "Max groups don't fit");
-    layout = XkbWrapGroupIntoRange((int32_t) layout, key->num_groups,
-                                   key->out_of_range_group_policy,
-                                   key->out_of_range_group_number);
+    layout = xkb_keymap_key_effective_layout(key, layout);
     if (layout == XKB_LAYOUT_INVALID)
         return 0;
 
@@ -473,10 +577,7 @@ xkb_keymap_key_get_mods_for_level(struct xkb_keymap *keymap,
     if (!key)
         return 0;
 
-    static_assert(XKB_MAX_GROUPS < INT32_MAX, "Max groups don't fit");
-    layout = XkbWrapGroupIntoRange((int32_t) layout, key->num_groups,
-                                   key->out_of_range_group_policy,
-                                   key->out_of_range_group_number);
+    layout = xkb_keymap_key_effective_layout(key, layout);
     if (layout == XKB_LAYOUT_INVALID)
         return 0;
 
@@ -526,10 +627,7 @@ struct xkb_level *
 xkb_keymap_key_get_level(struct xkb_keymap *keymap, const struct xkb_key *key,
                          xkb_layout_index_t layout, xkb_level_index_t level)
 {
-    static_assert(XKB_MAX_GROUPS < INT32_MAX, "Max groups don't fit");
-    layout = XkbWrapGroupIntoRange((int32_t) layout, key->num_groups,
-                                   key->out_of_range_group_policy,
-                                   key->out_of_range_group_number);
+    layout = xkb_keymap_key_effective_layout(key, layout);
     if (layout == XKB_LAYOUT_INVALID)
         return NULL;
 
@@ -588,100 +686,168 @@ xkb_keymap_max_keycode(struct xkb_keymap *keymap)
     return keymap->max_key_code;
 }
 
-struct xkb_keymap_key_iterator {
-    int8_t increment;
-    bool skip_unbound;
-    const struct xkb_key *min;
-    const struct xkb_key *max;
-    const struct xkb_key *next;
-    struct xkb_keymap *keymap;
-};
-
-struct xkb_keymap_key_iterator *
-xkb_keymap_key_iterator_new(struct xkb_keymap *keymap,
-                            enum xkb_keymap_key_iterator_flags flags)
+static enum xkb_status
+keymap_key_iterator_config_check(
+    struct xkb_context * restrict ctx,
+    const char *func,
+    const struct xkb_keymap_key_iterator_config * restrict config
+)
 {
-    static const enum xkb_keymap_key_iterator_flags XKB_KEYMAP_KEY_ITERATOR_FLAGS
-        = XKB_KEYMAP_KEY_ITERATOR_DESCENDING_ORDER
-        | XKB_KEYMAP_KEY_ITERATOR_SKIP_UNBOUND;
-
-    if (flags & ~XKB_KEYMAP_KEY_ITERATOR_FLAGS) {
-            log_err(keymap->ctx, XKB_LOG_MESSAGE_NO_ID,
-                    "unrecognized keymap iterator flags: %#x\n",
-                    (flags & ~XKB_KEYMAP_KEY_ITERATOR_FLAGS));
-            return NULL;
+    /* Check ABI compatibility */
+    const enum xkb_status abi_error = xkb_check_keymap_abi(config);
+    if (abi_error) {
+        xkb_log_abi_error(ctx, func, abi_error);
+        return abi_error;
     }
 
-    struct xkb_keymap_key_iterator * const iter = calloc(1, sizeof(*iter));
-    if (!iter) {
-        log_err(keymap->ctx, XKB_ERROR_ALLOCATION_ERROR,
-                "Could not allocate a keymap key iterator.\n");
-        return NULL;
+    /* Sanitize input: flags */
+    const uint32_t invalid_flags =
+        (config->flags & ~(uint32_t)XKB_KEYMAP_KEY_ITERATOR_FLAGS_VALUES);
+    if (invalid_flags) {
+        log_err(ctx, XKB_ERROR_UNSUPPORTED_KEY_ITERATOR_FLAGS_,
+                "%s: Unsupported keymap iterator flags: 0x%"PRIx32"\n",
+                func, invalid_flags);
+        return XKB_ERROR_UNSUPPORTED_KEY_ITERATOR_FLAGS;
     }
 
-    iter->keymap = xkb_keymap_ref(keymap);
+    /* Sanitize input: start */
+    if (config->start > XKB_KEYCODE_MAX)
+        return XKB_ERROR_INVALID_KEYCODE;
 
-    if (keymap->num_keys == 0) {
-        iter->next = NULL;
-        iter->min = NULL;
-        iter->max = NULL;
-        return iter;
-    }
-
-    iter->skip_unbound = (flags & XKB_KEYMAP_KEY_ITERATOR_SKIP_UNBOUND);
-    iter->increment = (flags & XKB_KEYMAP_KEY_ITERATOR_DESCENDING_ORDER)
-        ? -1
-        : 1;
-    iter->min = (keymap->num_keys_low)
-        ? &iter->keymap->keys[keymap->min_key_code]
-        : &iter->keymap->keys[0];
-    iter->max = &iter->keymap->keys[iter->keymap->num_keys - 1];
-
-    if (iter->increment < 0) {
-        iter->next = iter->max;
-    } else {
-        iter->next = iter->min;
-    }
-
-    return iter;
+    return XKB_SUCCESS;
 }
 
-void
-xkb_keymap_key_iterator_destroy(struct xkb_keymap_key_iterator *iter)
-{
-    if (!iter)
-        return;
+static_assert(XKB_KEYMAP_KEY_ITERATOR_FLAGS_VALUES <=
+              (int)XKB_POINTER_TAG_MASK,
+              "Cannot tag cursor pointer with flags");
 
-    xkb_keymap_unref(iter->keymap);
-    free(iter);
+#define iter_init_keymap(i, ptr, flags) {          \
+    (i)->opaque0 = xkb_pointer_tag((ptr), (flags));\
+}
+#define iter_get_keymap(i) (                                  \
+    (const struct xkb_keymap *)xkb_pointer_untag((i)->opaque0)\
+)
+#define iter_get_next(i) ((const struct xkb_key *)(i)->opaque1)
+#define iter_set_next(i, ptr) {(i)->opaque1 = (const void *)(ptr);}
+#define iter_get_descending_order(i) (                  \
+    xkb_pointer_get_tag((i)->opaque0) &                 \
+    (uintptr_t)XKB_KEYMAP_KEY_ITERATOR_DESCENDING_ORDER \
+)
+#define iter_get_include_unbound(i) (                  \
+    xkb_pointer_get_tag((i)->opaque0) &                \
+    (uintptr_t)XKB_KEYMAP_KEY_ITERATOR_INCLUDE_UNBOUND \
+)
+
+enum xkb_status
+xkb_keymap_key_iterator_init(
+    struct xkb_keymap_key_iterator * restrict iter,
+    const struct xkb_keymap * restrict keymap,
+    const struct xkb_keymap_key_iterator_config * restrict config
+)
+{
+    /* Handle default configuration */
+    static const struct xkb_keymap_key_iterator_config default_config = {
+        .size = sizeof(default_config)
+    };
+    if (!config)
+        config = &default_config;
+
+    /* Check input */
+    const enum xkb_status status =
+        keymap_key_iterator_config_check(keymap->ctx, __func__, config);
+    if (status != XKB_SUCCESS) {
+        return status;
+    }
+
+    /*
+     * Initialization
+     */
+
+    memset(iter, 0, sizeof(*iter));
+
+    /* Borrow keymap */
+    iter_init_keymap(iter, keymap, config->flags);
+
+    if (keymap->num_keys == 0) {
+        iter_set_next(iter, NULL);
+        return XKB_SUCCESS;
+    }
+
+    /* Borrow key */
+    const struct xkb_key *next;
+    if (config->flags & XKB_KEYMAP_KEY_ITERATOR_DESCENDING_ORDER) {
+        if (!config->start || config->start > keymap->max_key_code) {
+            next = &keymap->keys[keymap->num_keys - 1];
+        } else {
+            /*
+             * May still fail *safely* if start < keymap->min_key_code:
+             * there will be simply no key to iterate over.
+             */
+            next = xkb_keymap_get_next_defined_key(keymap, false, config->start);
+        }
+    } else {
+        if (!config->start || config->start < keymap->min_key_code) {
+            next = (keymap->num_keys_low)
+                ? &keymap->keys[keymap->min_key_code]
+                : &keymap->keys[0];
+        } else {
+            /*
+             * May still fail *safely* if start > keymap->max_key_code:
+             * there will be simply no key to iterate over.
+             */
+            next = xkb_keymap_get_next_defined_key(keymap, true, config->start);
+        }
+    };
+    iter_set_next(iter, next);
+
+    return XKB_SUCCESS;
 }
 
 xkb_keycode_t
 xkb_keymap_key_iterator_next(struct xkb_keymap_key_iterator *iter)
 {
-    if (!iter->next)
+    const struct xkb_key *next = iter_get_next(iter);
+    if (!next)
         return XKB_KEYCODE_INVALID;
 
-    const struct xkb_key * next = iter->next;
+    const struct xkb_keymap *keymap = iter_get_keymap(iter);
+    assert(keymap->num_keys);
+
+    const bool descending = iter_get_descending_order(iter);
+    const bool skip_unbound = !iter_get_include_unbound(iter);
+    const struct xkb_key *last = descending
+        ? (keymap->num_keys_low)
+            ? &keymap->keys[keymap->min_key_code]
+            : &keymap->keys[0]
+        : &keymap->keys[keymap->num_keys - 1];
+    const ptrdiff_t step = descending ? -1 : 1;
 
     /* Skip undefined keys (no name) and optionally unbound keys */
-    while (next->name == XKB_ATOM_NONE ||
-           (iter->skip_unbound && (next->num_groups == 0))) {
-        next += iter->increment;
-        if (next < iter->min || next > iter->max) {
-            /* No key left */
-            iter->next = NULL;
+    for (;;) {
+        const bool iter_end = descending ? (next <= last) : (next >= last);
+        const bool skip = (
+            next->name == XKB_ATOM_NONE ||
+            (skip_unbound && (next->num_groups == 0))
+        );
+        if (!skip) {
+            const xkb_keycode_t ret = next->keycode;
+            iter_set_next(iter, iter_end ? NULL : next + step);
+            return ret;
+        }
+        if (iter_end) {
+            iter_set_next(iter, NULL);
             return XKB_KEYCODE_INVALID;
         }
+        next += step;
     }
-
-    const xkb_keycode_t ret = next->keycode;
-
-    next += iter->increment;
-    iter->next = (next < iter->min || next > iter->max) ? NULL : next;
-
-    return ret;
 }
+
+#undef iter_init_keymap
+#undef iter_get_keymap
+#undef iter_set_next
+#undef iter_get_next
+#undef iter_get_descending_order
+#undef iter_get_include_unbound
 
 void
 xkb_keymap_key_for_each(struct xkb_keymap *keymap, xkb_keymap_key_iter_t iter,

@@ -1,7 +1,7 @@
 project(
-    'libxkbcommon',
+    'xkbcommon',
     'c',
-    version: '1.13.0',
+    version: '1.14.0-beta2',
     default_options: [
         'c_std=c11',
         'build.c_std=c11',
@@ -10,7 +10,9 @@ project(
     meson_version: '>= 1.4.0',  # Released on March 2024
 )
 
-xkbcommon_project_version = meson.project_version().split('.')
+xkbcommon_project_version_parts = meson.project_version().split('-')
+xkbcommon_project_version = xkbcommon_project_version_parts[0].split('.')
+
 if xkbcommon_project_version[0] != '1'
     # The versioning used for the shared libraries assumes that the major
     # version of xkbcommon as a whole will increase to 2 if and only if there
@@ -117,7 +119,7 @@ if XKEYBOARD_CONFIG_ROOT == ''
     endif
 endif
 
-# The XKB config root for libxkbcommon
+# The XKB config root for xkbcommon
 XKB_CONFIG_ROOT = get_option('xkb-config-root')
 if XKB_CONFIG_ROOT == ''
     if XKEYBOARD_CONFIG_ROOT != ''
@@ -221,6 +223,11 @@ if get_option('default-options') != ''
 else
     configh_data.set('DEFAULT_XKB_OPTIONS', 'NULL')
 endif
+have_max_align_t = cc.has_type(
+    'max_align_t',
+    prefix: [system_ext_define, '#include <stddef.h>']
+)
+configh_data.set10('HAVE_MAX_ALIGN_T', have_max_align_t)
 have_unistd_h = cc.has_header('unistd.h')
 configh_data.set10('HAVE_UNISTD_H', have_unistd_h)
 have_dirent_h = cc.has_header('dirent.h')
@@ -288,6 +295,9 @@ elif cc.has_header_symbol(
 else
     message('C library does not support secure_getenv, using getenv instead')
 endif
+if cc.has_header_symbol('stdlib.h', 'random', prefix: system_ext_define)
+    configh_data.set10('HAVE_RANDOM', true)
+endif
 if cc.has_header_symbol('stdlib.h', 'realpath', prefix: system_ext_define)
     configh_data.set10('HAVE_REAL_PATH', true)
 endif
@@ -342,6 +352,9 @@ if cc.has_header_symbol('locale.h', 'newlocale', prefix: system_ext_define)
     if has_compose_locale_fallback
         configh_data.set10('HAVE_NEWLOCALE', true)
     endif
+endif
+if cc.has_header_symbol('wctype.h', 'iswprint_l', prefix: system_ext_define)
+    configh_data.set10('HAVE_ISWPRINT_L', true)
 endif
 
 # Silence some security & deprecation warnings on MSVC
@@ -401,6 +414,7 @@ libxkbcommon_sources = [
     'src/xkbcomp/types.c',
     'src/xkbcomp/vmod.c',
     'src/xkbcomp/xkbcomp.c',
+    'src/abi-check.c',
     'src/atom.c',
     'src/context.c',
     'src/context-priv.c',
@@ -418,7 +432,7 @@ libxkbcommon_sources = [
     'src/utf8.c',
     'src/utf8-decoding.c',
     'src/utils.c',
-    'src/utils-paths.c',
+    'src/util-paths.c',
 ]
 libxkbcommon_link_args = []
 libxkbcommon_link_deps = []
@@ -460,7 +474,7 @@ install_headers(
     'include/xkbcommon/xkbcommon.h',
     'include/xkbcommon/xkbcommon-compat.h',
     'include/xkbcommon/xkbcommon-compose.h',
-    'include/xkbcommon/xkbcommon-errors.h',
+    'include/xkbcommon/xkbcommon-status.h',
     'include/xkbcommon/xkbcommon-features.h',
     'include/xkbcommon/xkbcommon-keysyms.h',
     'include/xkbcommon/xkbcommon-names.h',

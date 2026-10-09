@@ -202,9 +202,11 @@ ApplyInterpsToKey(struct xkb_keymap *keymap, struct xkb_key *key)
             darray_enumerate(k, interp_iter, interprets) {
                 interp = *interp_iter;
                 /* Infer default key behaviours from the base level. */
-                if (group == 0 && level == 0)
-                    if (!(key->explicit & EXPLICIT_REPEAT) && interp->repeat)
-                        key->repeats = true;
+                if (group == 0 && level == 0 &&
+                    !(key->explicit & EXPLICIT_REPEAT) && interp->repeat)
+                {
+                    key->repeats = true;
+                }
 
                 if ((group == 0 && level == 0) || !interp->level_one_only) {
                     static_assert((uint32_t)DEFAULT_INTERPRET_VMOD ==
@@ -254,7 +256,7 @@ ApplyInterpsToKey(struct xkb_keymap *keymap, struct xkb_key *key)
                                key->groups[group].levels[level].num_actions,
                                sizeof(*darray_items(actions)));
                     if (!key->groups[group].levels[level].a.actions) {
-                        log_err(keymap->ctx, XKB_ERROR_ALLOCATION_ERROR,
+                        log_err(keymap->ctx, XKB_ERROR_ALLOCATION_FAILURE_,
                                 "Could not allocate interpret actions\n");
                         darray_free(actions);
                         darray_free(interprets);
@@ -372,7 +374,7 @@ update_pending_key_fields(struct xkb_keymap_info *info, struct xkb_key *key)
                 pc->value = group - 1;
                 break;
             case PARSER_FATAL_ERROR:
-                log_err(info->keymap.ctx, XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX,
+                log_err(info->keymap.ctx, XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX_,
                         "Invalid key redirect group index\n");
                 return (info->strict & PARSER_NO_FIELD_TYPE_MISMATCH);
             default:
@@ -402,7 +404,7 @@ update_pending_action_fields(struct xkb_keymap_info *info,
                     (act->group.flags & ACTION_ABSOLUTE_SWITCH);
                 switch (ExprResolveGroup(info, pc->expr, absolute, &group, NULL)) {
                 case PARSER_FATAL_ERROR:
-                    log_err(info->keymap.ctx, XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX,
+                    log_err(info->keymap.ctx, XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX_,
                             "Invalid action group index\n");
                     return false;
                 case PARSER_RECOVERABLE_ERROR:
@@ -451,7 +453,7 @@ update_pending_led_fields(struct xkb_keymap_info *info, struct xkb_led *led)
         if (!pc->computed) {
             xkb_layout_mask_t mask = 0;
             if (!ExprResolveGroupMask(info, pc->expr, &mask, NULL)) {
-                log_err(info->keymap.ctx, XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX,
+                log_err(info->keymap.ctx, XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX_,
                         "Invalid LED group mask\n");
                 return false;
             }
@@ -797,13 +799,7 @@ CompileKeymap(XkbFile *file, struct xkb_keymap *keymap)
     struct xkb_keymap_info info = {
         /* Copy the keymap */
         .keymap = *keymap,
-        .strict = (keymap->format == XKB_KEYMAP_FORMAT_TEXT_V1)
-            ? (keymap->flags & XKB_KEYMAP_COMPILE_STRICT_MODE
-                ? PARSER_V1_STRICT_FLAGS
-                : PARSER_V1_LAX_FLAGS)
-            : (keymap->flags & XKB_KEYMAP_COMPILE_STRICT_MODE
-                ? PARSER_V2_STRICT_FLAGS
-                : PARSER_V2_LAX_FLAGS),
+        .strict = parser_strict_flags_from_keymap(keymap),
         .features = {
             .max_groups = format_max_groups(keymap->format),
             .max_overlays = format_max_overlays(keymap->format),
@@ -820,7 +816,7 @@ CompileKeymap(XkbFile *file, struct xkb_keymap *keymap)
         /*
          * NOTE: `first` and `last` group constants are never used for
          *       serialization, in order to maintain compatibility with
-         *       xkbcomp and older libxkbcommon versions.
+         *       xkbcomp and older xkbcommon versions.
          */
         .lookup = {
             .groupIndexNames = {
@@ -879,7 +875,8 @@ CompileKeymap(XkbFile *file, struct xkb_keymap *keymap)
         } else {
             log_dbg(ctx, XKB_LOG_MESSAGE_NO_ID,
                     "Compiling %s \"%s\"\n",
-                    xkb_file_type_to_string(type), safe_map_name(files[type]));
+                    xkb_file_type_to_string(type),
+                    safe_map_name(files[type]->name));
         }
 
         /* Missing components are initialized with defaults */

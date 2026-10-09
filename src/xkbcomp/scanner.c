@@ -13,7 +13,7 @@
 #include "xkbcomp-priv.h"
 #include "parser-priv.h"
 
-const char DECIMAL_SEPARATOR = '.';
+static const char DECIMAL_SEPARATOR = '.';
 
 static bool
 number(struct scanner *s, int64_t *out, int *out_tok)
@@ -104,15 +104,15 @@ skip_more_whitespace_and_comments:
             if (scanner_chr(s, '\\')) {
                 uint8_t o;
                 const size_t start_pos = s->pos;
-                if      (scanner_chr(s, '\\')) scanner_buf_append(s, '\\');
-                else if (scanner_chr(s, '"'))  scanner_buf_append(s, '"');
-                else if (scanner_chr(s, 'n'))  scanner_buf_append(s, '\n');
-                else if (scanner_chr(s, 't'))  scanner_buf_append(s, '\t');
-                else if (scanner_chr(s, 'r'))  scanner_buf_append(s, '\r');
-                else if (scanner_chr(s, 'b'))  scanner_buf_append(s, '\b');
-                else if (scanner_chr(s, 'f'))  scanner_buf_append(s, '\f');
-                else if (scanner_chr(s, 'v'))  scanner_buf_append(s, '\v');
-                else if (scanner_chr(s, 'e'))  scanner_buf_append(s, '\x1b');
+                if      (scanner_chr(s, '\\')){scanner_buf_append(s, '\\');}
+                else if (scanner_chr(s, '"')) {scanner_buf_append(s, '"');}
+                else if (scanner_chr(s, 'n')) {scanner_buf_append(s, '\n');}
+                else if (scanner_chr(s, 't')) {scanner_buf_append(s, '\t');}
+                else if (scanner_chr(s, 'r')) {scanner_buf_append(s, '\r');}
+                else if (scanner_chr(s, 'b')) {scanner_buf_append(s, '\b');}
+                else if (scanner_chr(s, 'f')) {scanner_buf_append(s, '\f');}
+                else if (scanner_chr(s, 'v')) {scanner_buf_append(s, '\v');}
+                else if (scanner_chr(s, 'e')) {scanner_buf_append(s, '\x1b');}
                 else if (scanner_chr(s, 'u')) {
                     /* Unicode escape sequence */
                     uint32_t cp = 0;
@@ -131,8 +131,9 @@ skip_more_whitespace_and_comments:
                         /* Ignore. */
                     }
                 }
-                else if (scanner_oct(s, &o) && is_valid_char((uint32_t) o))
+                else if (scanner_oct(s, &o) && is_valid_char((uint32_t) o)) {
                     scanner_buf_append(s, (char) o);
+                }
                 else if (s->pos > start_pos) {
                     scanner_warn(s, XKB_WARNING_INVALID_ESCAPE_SEQUENCE,
                                  "invalid octal escape sequence \"%.*s\" "
@@ -253,31 +254,35 @@ XkbParseStringInit(struct xkb_context *ctx, struct scanner *scanner,
 }
 
 XkbFile *
-XkbParseString(struct xkb_context *ctx, const char *string, size_t len,
+XkbParseString(struct xkb_context *ctx,
+               const struct parser_keymap_config *config,
+               const char *string, size_t len,
                const char *file_name, const char *map)
 {
     struct scanner scanner;
     if (!XkbParseStringInit(ctx, &scanner, string, len, file_name, map))
         return NULL;
 
-    return parse(ctx, &scanner, map);
+    return parse(ctx, config, &scanner, map);
 }
 
 bool
-XkbParseStringNext(struct xkb_context *ctx, struct scanner *scanner,
-                   const char *map, XkbFile **out)
+XkbParseStringNext(struct xkb_context *ctx,
+                   const struct parser_keymap_config *config,
+                   struct scanner *scanner, const char *map, XkbFile **out)
 {
     if (map) {
-        *out = parse(ctx, scanner, map);
+        *out = parse(ctx, config, scanner, map);
         return !!(*out);
     } else {
-        return parse_next(ctx, scanner, out);
+        return parse_next(ctx, config, scanner, out);
     }
 }
 
 XkbFile *
-XkbParseFile(struct xkb_context *ctx, FILE *file,
-             const char *file_name, const char *map)
+XkbParseFile(struct xkb_context *ctx,
+             const struct parser_keymap_config *config,
+             FILE *file, const char *file_name, const char *map)
 {
     bool ok;
     XkbFile *xkb_file;
@@ -292,7 +297,7 @@ XkbParseFile(struct xkb_context *ctx, FILE *file,
         return NULL;
     }
 
-    xkb_file = XkbParseString(ctx, string, size, file_name, map);
+    xkb_file = XkbParseString(ctx, config, string, size, file_name, map);
     unmap_file(string, size);
     return xkb_file;
 }

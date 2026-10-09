@@ -8,7 +8,7 @@
 #include <limits.h>
 
 #include "xkbcommon/xkbcommon.h"
-#include "xkbcommon/xkbcommon-errors.h"
+#include "xkbcommon/xkbcommon-status.h"
 #include "xkbcomp-priv.h"
 #include "text.h"
 #include "vmod.h"
@@ -217,12 +217,17 @@ HandleIncludeKeyTypes(KeyTypesInfo *info, IncludeStmt *include)
                      &info->mods);
     included.name = steal(&include->stmt);
 
+    const struct parser_keymap_config config = {
+        .format = info->keymap_info->keymap.format,
+        .strict = info->keymap_info->strict
+    };
+
     for (IncludeStmt *stmt = include; stmt; stmt = stmt->next_incl) {
         KeyTypesInfo next_incl;
         XkbFile *file;
 
         char path[PATH_MAX];
-        file = ProcessIncludeFile(info->ctx, stmt, FILE_TYPE_TYPES,
+        file = ProcessIncludeFile(info->ctx, &config, stmt, FILE_TYPE_TYPES,
                                   path, sizeof(path));
         if (!file) {
             info->errorCount += 10;
@@ -734,7 +739,7 @@ HandleKeyTypesFile(KeyTypesInfo *info, XkbFile *file)
         if (info->errorCount > 10) {
             log_err(info->ctx, XKB_ERROR_INVALID_XKB_SYNTAX,
                     "Abandoning keytypes file \"%s\"\n",
-                    safe_map_name(file));
+                    safe_map_name(file->name));
             break;
         }
     }
@@ -765,22 +770,22 @@ CopyKeyTypesToKeymap(struct xkb_keymap *keymap, KeyTypesInfo *info)
      * “The X Keyboard Extension: Protocol Specification”:
      * https://www.x.org/releases/current/doc/kbproto/xkbproto.html#canonical_key_types
      *
-     * In the Xorg ecosystem, any missing canonical type fallbacks to a default
+     * In the Xorg ecosystem, any missing canonical type falls back to a default
      * type supplied by libX11’s `XkbInitCanonicalKeyTypes()`, e.g. in xkbcomp.
      *
-     * libxkbcommon does not require these types per se: it only requires that
+     * xkbcommon does not require these types per se: it only requires that
      * all *used* types — explicit (`type="…"`) or implicit (automatic types) —
      * are defined, with the exception that if no key type at all is defined,
      * then a default `ONE_LEVEL` type is provided.
      *
-     * libxkbcommon also does not require any particular order of these key
+     * xkbcommon also does not require any particular order of these key
      * types, because they are retrieved using their name instead of their index.
      *
-     * Since 1.12 (31900860c65b88e4d10ad7dd00377e2815cca0f6), libxkbcommon drops
+     * Since 1.12 (31900860c65b88e4d10ad7dd00377e2815cca0f6), xkbcommon drops
      * any *unused* key type at serialization by default. Some layouts with 4+
      * levels may not require e.g. the `TWO_LEVEL` nor the `ALPHABETIC` types.
      *
-     * In theory, libxkbcommon would not care of the presence of the canonical
+     * In theory, xkbcommon would not care of the presence of the canonical
      * key types and could delegate the property check, fallback and ordering
      * work to xkbcomp, as it is the case in Xorg’s Xwayland. However the
      * fallback implementation is buggy:
@@ -790,9 +795,9 @@ CopyKeyTypesToKeymap(struct xkb_keymap *keymap, KeyTypesInfo *info)
      *
      * The canonical key types are always present in the keymap generated from
      * xkeyboard-config and custom keymaps usually include these types too. So
-     * to circumvent the issues of Xorg, it should suffice that libxkbcommon
+     * to circumvent the issues of Xorg, it should suffice that xkbcommon
      * ensures to never discard the canonical key types, if present, and continue
-     * to delegate the (unlikely) type fallbacks to xkbcomp.
+     * to delegate the (unlikely) type falls back to xkbcomp.
      */
 
     /*

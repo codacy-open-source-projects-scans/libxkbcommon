@@ -28,20 +28,22 @@
 #include <process.h>
 #else
 #include <unistd.h>
-#if defined(HAVE_TERMIOS)
+#ifdef HAVE_TERMIOS
 #include <termios.h>
 #endif
 #endif
 
 #include "xkbcommon/xkbcommon.h"
 #include "xkbcommon/xkbcommon-compose.h"
+#include "xkbcommon/xkbcommon-status.h"
 #include "tools-common.h"
 #include "src/compose/constants.h"
+#include "src/features/enums.h"
 #include "src/keysym.h"
 #include "src/keymap.h"
 #include "src/messages-codes.h"
 #include "src/utils.h"
-#include "src/utils-numbers.h"
+#include "src/util-numbers.h"
 #include "src/utf8-decoding.h"
 
 #if defined(_WIN32) && !defined(S_ISFIFO)
@@ -165,6 +167,15 @@ print_keys_modmaps(struct xkb_keymap *keymap) {
 }
 
 static void
+print_frame(const char *prefix)
+{
+    if (prefix)
+        printf("%s", prefix);
+
+    printf("end of frame\n");
+}
+
+static void
 print_modifiers_names(struct xkb_state *state,
                       enum xkb_state_component components,
                       xkb_keycode_t keycode,
@@ -174,9 +185,11 @@ print_modifiers_names(struct xkb_state *state,
     for (xkb_mod_index_t mod = 0; mod < xkb_keymap_num_mods(keymap); mod++) {
         if (xkb_state_mod_index_is_active(state, mod, components) <= 0)
             continue;
+        // NOLINTBEGIN(readability-suspicious-call-argument)
         const bool consumed =
             keycode != XKB_KEYCODE_INVALID &&
             xkb_state_mod_index_is_consumed2(state, keycode, mod, consumed_mode);
+        // NOLINTEND(readability-suspicious-call-argument)
         printf(" %s%s",
                (consumed ? "-" : ""), xkb_keymap_mod_get_name(keymap, mod));
     }
@@ -319,6 +332,10 @@ print_leds(struct xkb_state *state, bool verbose) {
         }
         count++;
     }
+
+    /* TODO: refactor when `xkb_state_serialize_leds()` is available */
+    if (verbose && !count)
+        printf("(none)");
 }
 
 static void
@@ -360,9 +377,10 @@ print_controls(struct xkb_state *state, bool verbose) {
     );
 
     const enum xkb_keyboard_control_flags ctrls =
-        xkb_state_serialize_enabled_controls(state, XKB_STATE_CONTROLS);
+        xkb_state_serialize_controls(state, XKB_STATE_CONTROLS_EFFECTIVE);
 
-    printf("0x%08x ", ctrls);
+    if (verbose)
+        printf("0x%08x ", ctrls);
 
     if (!ctrls) {
         printf("(none)");
@@ -386,8 +404,7 @@ tools_print_detailed_keycode_state(const char *prefix,
                                    struct xkb_compose_state *compose_state,
                                    xkb_keycode_t keycode,
                                    enum xkb_key_direction direction,
-                                   enum xkb_consumed_mode consumed_mode,
-                                   enum print_state_options options)
+                                   const struct tools_events_options *options)
 {
     printf("------------\n");
     if (prefix)
@@ -408,19 +425,19 @@ tools_print_detailed_keycode_state(const char *prefix,
 
     const xkb_layout_index_t layout = xkb_state_key_get_layout(state, keycode);
 
-    const bool verbose = options & PRINT_VERBOSE;
+    const bool verbose = (options->print & PRINT_VERBOSE);
 
-    if (options & PRINT_LAYOUT)
+    if (options->print & PRINT_LAYOUT)
         print_layouts(state, 0, keycode, verbose);
 
     if (verbose) {
-        print_modifiers(state, 0, keycode, true, consumed_mode, verbose);
+        print_modifiers(state, 0, keycode, true, options->consumed_mode, verbose);
         printf(INDENT "level: %"PRIu32"\n",
                xkb_state_key_get_level(state, keycode, layout));
     } else {
         printf(INDENT "level:  %"PRIu32",  ",
                xkb_state_key_get_level(state, keycode, layout));
-        print_modifiers(state, 0, keycode, true, consumed_mode, verbose);
+        print_modifiers(state, 0, keycode, true, options->consumed_mode, verbose);
     }
 
     enum xkb_compose_status status = XKB_COMPOSE_NOTHING;
@@ -469,7 +486,7 @@ tools_print_detailed_keycode_state(const char *prefix,
         assert(!"Unexpected compose state");
     }
 
-    if ((options & PRINT_UNICODE) && show_unicode) {
+    if ((options->print & PRINT_UNICODE) && show_unicode) {
         if (status == XKB_COMPOSE_COMPOSED)
             xkb_compose_state_get_utf8(compose_state, s, sizeof(s));
         else
@@ -507,6 +524,12 @@ tools_print_detailed_keycode_state(const char *prefix,
     printf(INDENT "LEDs: ");
     print_leds(state, true);
     printf("\n");
+
+    if (verbose) {
+        printf(INDENT "Controls: ");
+        print_controls(state, true);
+        printf("\n");
+    }
 }
 
 static void
@@ -515,8 +538,7 @@ tools_print_one_liner_keycode_state(const char *prefix,
                                     struct xkb_compose_state *compose_state,
                                     xkb_keycode_t keycode,
                                     enum xkb_key_direction direction,
-                                    enum xkb_consumed_mode consumed_mode,
-                                    enum print_state_options options)
+                                    const struct tools_events_options *options)
 {
     if (prefix)
         printf("%s", prefix);
@@ -566,7 +588,7 @@ tools_print_one_liner_keycode_state(const char *prefix,
     }
     printf("] ");
 
-    if (!(options & PRINT_UNICODE)) {
+    if (!(options->print & PRINT_UNICODE)) {
         /* Do nothing */
     } else if (status == XKB_COMPOSE_COMPOSING) {
         printf("composing [  ] ");
@@ -598,7 +620,7 @@ tools_print_one_liner_keycode_state(const char *prefix,
     }
 
     const xkb_layout_index_t layout = xkb_state_key_get_layout(state, keycode);
-    if (options & PRINT_LAYOUT) {
+    if (options->print & PRINT_LAYOUT) {
         const char * const layout_name =
             xkb_keymap_layout_get_name(keymap, layout);
         printf("layout [ #%"PRIu32" %s ] ",
@@ -610,7 +632,7 @@ tools_print_one_liner_keycode_state(const char *prefix,
 
     printf("mods [");
     print_modifiers_names(state, XKB_STATE_MODS_EFFECTIVE, keycode,
-                          consumed_mode);
+                          options->consumed_mode);
     printf(" ] ");
 
     printf("leds [ ");
@@ -624,24 +646,19 @@ tools_print_keycode_state(const char *prefix,
                           struct xkb_compose_state *compose_state,
                           xkb_keycode_t keycode,
                           enum xkb_key_direction direction,
-                          enum xkb_consumed_mode consumed_mode,
-                          enum print_state_options options)
+                          const struct tools_events_options *options)
 {
 
     if (keycode == XKB_KEYCODE_INVALID)
         return;
 
-    if (options & PRINT_UNILINE) {
-        tools_print_one_liner_keycode_state(
-            prefix, state, compose_state, keycode, direction,
-            consumed_mode, options
-        );
+    if (options->print & PRINT_UNILINE) {
+        tools_print_one_liner_keycode_state(prefix, state, compose_state,
+                                            keycode, direction, options);
         printf("\n");
     } else {
-        tools_print_detailed_keycode_state(
-            prefix, state, compose_state, keycode, direction,
-            consumed_mode, options
-        );
+        tools_print_detailed_keycode_state(prefix, state, compose_state,
+                                           keycode, direction, options);
     }
 }
 
@@ -662,7 +679,7 @@ tools_print_state_changes(const char *prefix, struct xkb_state *state,
                         XKB_CONSUMED_MODE_XKB /* unused*/, false);
         if (changed & XKB_STATE_LEDS)
             printf("leds ");
-        if (changed & XKB_STATE_CONTROLS)
+        if (changed & XKB_STATE_CONTROLS_EFFECTIVE)
             printf("controls ");
         printf("]\n");
     } else {
@@ -689,10 +706,110 @@ tools_print_state_changes(const char *prefix, struct xkb_state *state,
             printf("\n");
         }
 
-        if (changed & XKB_STATE_CONTROLS) {
+        if (changed & XKB_STATE_CONTROLS_EFFECTIVE) {
             printf(INDENT "Controls: ");
             print_controls(state, true);
             printf("\n");
+        }
+    }
+}
+
+static void
+tools_print_pointer_motion(const char * restrict prefix,
+                           const struct xkb_event_pointer_motion * restrict motion,
+                           enum print_state_options options)
+{
+    if (prefix)
+        printf("%s", prefix);
+
+    if (options & PRINT_UNILINE) {
+        printf("ptr motion [ ");
+        printf(((motion->flags & XKB_POINTER_MOTION_ABSOLUTE_X)
+                ? "%11"PRId32 : "%+11"PRId32),
+               motion->x);
+        printf(", ");
+        printf(((motion->flags & XKB_POINTER_MOTION_ABSOLUTE_Y)
+                ? "%-11"PRId32 : "%+-11"PRId32),
+               motion->y);
+        printf(" ] [ repeats: %s ]\n",
+               ((motion->flags & XKB_POINTER_MOTION_REPEATS)
+                   ? "true" : "false"));
+    } else {
+        printf("ptr motion:\n");
+        printf(INDENT "x:       ");
+        printf(((motion->flags & XKB_POINTER_MOTION_ABSOLUTE_X)
+                ? "%"PRId32 : "%+"PRId32),
+               motion->x);
+        printf("\n" INDENT "y:       ");
+        printf(((motion->flags & XKB_POINTER_MOTION_ABSOLUTE_Y)
+                ? "%"PRId32 : "%+"PRId32),
+               motion->y);
+        printf("\n" INDENT "repeats: %s\n",
+               ((motion->flags & XKB_POINTER_MOTION_REPEATS)
+                   ? "true" : "false"));
+    }
+}
+
+static void
+tools_print_pointer_button(const char * restrict prefix,
+                           const struct xkb_event_pointer_button * restrict button,
+                           enum print_state_options options)
+{
+    if (prefix)
+        printf("%s", prefix);
+
+    if (options & PRINT_UNILINE) {
+        printf("ptr button ");
+        printf("[ %10"PRIu32" ] ", button->button);
+        if (button->count) {
+            printf("[ click: %3"PRIu8" ]\n", button->count);
+        } else {
+            printf("[  %s   ] ",
+                   (button->state == XKB_POINTER_BUTTON_RELEASED
+                    ? "release"
+                    : " press "));
+        }
+    } else {
+        printf("ptr button:\n");
+        printf(INDENT "button: %"PRIu32"\n", button->button);
+        if (button->count) {
+            printf(INDENT "click:  %"PRIu8"\n", button->count);
+        } else {
+            printf(INDENT "state:  %s\n",
+                   (button->state == XKB_POINTER_BUTTON_RELEASED
+                    ? "release"
+                    : "press"));
+        }
+    }
+}
+
+static void
+tools_print_terminate_server(const char * restrict prefix)
+{
+    if (prefix)
+        printf("%s", prefix);
+    printf("terminate server\n");
+}
+
+static void
+tools_print_switch_virtual_console(const char * restrict prefix,
+                                   int8_t index_or_offset, bool is_offset,
+                                   enum print_state_options options)
+{
+    if (prefix)
+        printf("%s", prefix);
+
+    if (options & PRINT_UNILINE) {
+        printf("switch virtual console ");
+        printf((is_offset ? "[ %+4"PRId8" ] " : "[ %4"PRId8" ] "),
+               index_or_offset);
+
+    } else {
+        printf("switch virtual console:\n");
+        if (is_offset) {
+            printf(INDENT "offset: %+"PRId8"\n", index_or_offset);
+        } else {
+            printf(INDENT "index:  %"PRId8"\n", index_or_offset);
         }
     }
 }
@@ -703,53 +820,95 @@ void
 tools_print_events(const char *prefix, struct xkb_state *state,
                    struct xkb_events *events,
                    struct xkb_compose_state *compose_state,
-                   enum xkb_consumed_mode consumed_mode,
-                   enum print_state_options options, bool report_state_changes)
+                   const struct tools_events_options *options)
 {
     const struct xkb_event *event;
     while ((event = xkb_events_next(events)) != NULL) {
-        const enum xkb_event_type event_type =
-            xkb_event_get_type(event);
+        const enum xkb_event_type event_type = xkb_event_get_type(event);
+        enum xkb_status status = XKB_SUCCESS;
         switch (event_type) {
-            case XKB_EVENT_TYPE_KEY_DOWN:
-            case XKB_EVENT_TYPE_KEY_REPEATED:
-            case XKB_EVENT_TYPE_KEY_UP: {
-                const xkb_keycode_t kc = xkb_event_get_keycode(event);
-                const enum xkb_key_direction direction
-                    = (event_type == XKB_EVENT_TYPE_KEY_UP)
-                    ? XKB_KEY_UP
-                    : (event_type == XKB_EVENT_TYPE_KEY_REPEATED)
-                        ? XKB_KEY_REPEATED
-                        : XKB_KEY_DOWN;
+            case XKB_EVENT_TYPE_INVALID:
+                status = XKB_ERROR_INVALID;
+                goto event_error;
+            case XKB_EVENT_TYPE_FRAME:
+                if (options->report & REPORT_FRAMES)
+                    print_frame(prefix);
+                break;
+            case XKB_EVENT_TYPE_KEY: {
+                xkb_keycode_t kc;
+                enum xkb_key_direction direction;
+                status = xkb_event_get_keycode(event, &kc, &direction);
+                if (status != XKB_SUCCESS)
+                    goto event_error;
                 if (compose_state && direction == XKB_KEY_DOWN) {
                     const xkb_keysym_t keysym =
                         xkb_state_key_get_one_sym(state, kc);
                     xkb_compose_state_feed(compose_state, keysym);
                 }
                 tools_print_keycode_state(prefix, state, compose_state, kc,
-                                          direction, consumed_mode,
-                                          options);
+                                          direction, options);
                 if (compose_state) {
-                    const enum xkb_compose_status status =
+                    const enum xkb_compose_status compose_status =
                         xkb_compose_state_get_status(compose_state);
-                    if (status == XKB_COMPOSE_CANCELLED ||
-                        status == XKB_COMPOSE_COMPOSED)
+                    if (compose_status == XKB_COMPOSE_CANCELLED ||
+                        compose_status == XKB_COMPOSE_COMPOSED)
                             xkb_compose_state_reset(compose_state);
                 }
                 break;
             }
-            case XKB_EVENT_TYPE_COMPONENTS_CHANGE: {
-                const enum xkb_state_component changed =
-                    xkb_state_update_event(state, event);
-                if (report_state_changes && changed)
-                    tools_print_state_changes(prefix, state, changed, options);
+            case XKB_EVENT_TYPE_STATE_COMPONENTS: {
+                enum xkb_state_component changed;
+                status = xkb_state_update_event(state, event, &changed);
+                if (status != XKB_SUCCESS)
+                    goto event_error;
+                if ((options->report & REPORT_STATE_CHANGES) && changed)
+                    tools_print_state_changes(prefix, state, changed, options->print);
+                break;
+            }
+            case XKB_EVENT_TYPE_POINTER_MOTION: {
+                struct xkb_event_pointer_motion motion = {
+                    .size = sizeof(motion)
+                };
+                status = xkb_event_get_pointer_motion(event, &motion);
+                if (status != XKB_SUCCESS)
+                    goto event_error;
+                tools_print_pointer_motion(prefix, &motion, options->print);
+                break;
+            }
+            case XKB_EVENT_TYPE_POINTER_BUTTON: {
+                struct xkb_event_pointer_button button = {
+                    .size = sizeof(button)
+                };
+                status = xkb_event_get_pointer_button(event, &button);
+                if (status != XKB_SUCCESS)
+                    goto event_error;
+                tools_print_pointer_button(prefix, &button, options->print);
+                break;
+            }
+            case XKB_EVENT_TYPE_TERMINATE_DISPLAY_SERVER:
+                /* No getter */
+                tools_print_terminate_server(prefix);
+                break;
+            case XKB_EVENT_TYPE_SWITCH_VIRTUAL_CONSOLE: {
+                int8_t index_or_offset;
+                bool is_offset;
+                status = xkb_event_get_virtual_console(event, &index_or_offset,
+                                                       &is_offset);
+                if (status != XKB_SUCCESS)
+                    goto event_error;
+                tools_print_switch_virtual_console(prefix, index_or_offset,
+                                                   is_offset, options->print);
                 break;
             }
             default: {
-                static_assert(XKB_EVENT_TYPE_COMPONENTS_CHANGE == 4 &&
-                              XKB_EVENT_TYPE_COMPONENTS_CHANGE ==
-                              (enum xkb_event_type) _LAST_XKB_EVENT_TYPE,
+                static_assert(XKB_EVENT_TYPE_SWITCH_VIRTUAL_CONSOLE == 7 &&
+                              XKB_EVENT_TYPE_SWITCH_VIRTUAL_CONSOLE ==
+                              (enum xkb_event_type) _XKB_EVENT_TYPE_MAX,
                               "Missing event type");
+            event_error:
+                fprintf(stderr,
+                        "ERROR: cannot process event type %d; error code: %d\n",
+                        event_type, status);
             }
         }
     }
@@ -953,6 +1112,32 @@ tools_parse_bool(const char *s, enum tools_arg_optionality optional, bool *out)
     }
 }
 
+bool
+tools_parse_mask(const char *s, enum tools_arg_optionality optional, uint32_t *out)
+{
+    #define HEX_PREFIX "0x"
+    if (isempty(s)) {
+        if (optional == TOOLS_ARG_REQUIRED) {
+            fprintf(stderr, "ERROR: mask value is required, but got none\n");
+            return false;
+        } else {
+            /* Keep value unchanged */
+            return true;
+        }
+    } else if (strncmp(s, HEX_PREFIX, sizeof(HEX_PREFIX) - 1) == 0) {
+        const int count =
+            parse_hex_to_uint32_t(s + sizeof(HEX_PREFIX) - 1, SIZE_MAX, out);
+        const size_t expected = strlen(s) - (sizeof(HEX_PREFIX) - 1);
+        if (count == (int)expected) {
+            return true;
+        }
+    }
+
+    fprintf(stderr, "ERROR: invalid mask value: \"%s\"\n", s);
+    return false;
+    #undef HEX_PREFIX
+}
+
 static void
 xkb_raw_modifiers_free(struct xkb_raw_mod_mask *raw_mods)
 {
@@ -980,6 +1165,17 @@ xkb_machine_options_free(struct xkb_machine_options *options)
 }
 
 static bool
+xkb_machine_options_update_flags(struct xkb_machine_options *options,
+                                 enum xkb_machine_flags flags, bool disable)
+{
+    if (disable)
+        options->machine_flags &= ~flags;
+    else
+        options->machine_flags |= flags;
+    return true;
+}
+
+static bool
 xkb_machine_options_update_boolean_ctrls(struct xkb_machine_options *options,
                                          enum xkb_keyboard_control_flags flags,
                                          bool disable)
@@ -988,7 +1184,7 @@ xkb_machine_options_update_boolean_ctrls(struct xkb_machine_options *options,
         options->controls.boolean.flags &= ~flags;
     else
         options->controls.boolean.flags |= flags;
-    options->controls.boolean.affect |= flags;
+    options->controls.boolean.affect_flags |= flags;
     return true;
 }
 
@@ -1001,7 +1197,7 @@ xkb_machine_options_update_a11y_flags(struct xkb_machine_options *options,
         options->controls.a11y.flags &= ~flags;
     else
         options->controls.a11y.flags |= flags;
-    options->controls.a11y.affect |= flags;
+    options->controls.a11y.affect_flags |= flags;
     return true;
 }
 
@@ -1021,10 +1217,18 @@ tools_parse_controls(const char *raw, struct xkb_machine_options *options)
         CONTROL_FIELD_OVERLAY7,
         CONTROL_FIELD_OVERLAY8,
         CONTROL_FIELD_STICKY_KEYS,
-        CONTROL_FIELD_LATCH_TO_LOCK,
+        CONTROL_FIELD_STICKY_KEYS_NO_SIMULTANEOUS_KEYS,
+        CONTROL_FIELD_STICKY_KEYS_LATCH_TO_LOCK,
         CONTROL_FIELD_LATCH_SIMULTANEOUS,
+        CONTROL_FIELD_MOUSE_KEYS,
+        CONTROL_FIELD_SERVER_ACTIONS,
         _NUM_CONTROL_FIELDS,
     };
+
+    static_assert((enum control_field)XKB_OVERLAY_MIN == CONTROL_FIELD_OVERLAY1,
+                  "Missing fields or invalid encoding");
+    static_assert((enum control_field)XKB_OVERLAY_MAX == CONTROL_FIELD_OVERLAY8,
+                  "Missing fields or invalid encoding");
 
     static const char * fields[] = {
         [CONTROL_FIELD_OVERLAY1] = "overlay1",
@@ -1036,9 +1240,16 @@ tools_parse_controls(const char *raw, struct xkb_machine_options *options)
         [CONTROL_FIELD_OVERLAY7] = "overlay7",
         [CONTROL_FIELD_OVERLAY8] = "overlay8",
         [CONTROL_FIELD_STICKY_KEYS] = "sticky-keys",
-        [CONTROL_FIELD_LATCH_TO_LOCK] = "latch-to-lock",
-        [CONTROL_FIELD_LATCH_SIMULTANEOUS]= "latch-simultaneous",
+        [CONTROL_FIELD_STICKY_KEYS_NO_SIMULTANEOUS_KEYS] = "sticky-keys-no-simultaneous",
+        [CONTROL_FIELD_STICKY_KEYS_LATCH_TO_LOCK] = "sticky-keys-latch-to-lock",
+        [CONTROL_FIELD_LATCH_SIMULTANEOUS] = "latch-simultaneous",
+        [CONTROL_FIELD_MOUSE_KEYS] = "mouse-keys",
+        [CONTROL_FIELD_SERVER_ACTIONS] = "server-actions",
     };
+
+    static_assert(CONTROL_FIELD_SERVER_ACTIONS == 13 &&
+                  CONTROL_FIELD_SERVER_ACTIONS + 1 == _NUM_CONTROL_FIELDS &&
+                  ARRAY_SIZE(fields) == _NUM_CONTROL_FIELDS, "");
 
     const char *start = raw;
     const char *s = start;
@@ -1052,7 +1263,7 @@ tools_parse_controls(const char *raw, struct xkb_machine_options *options)
 
         /*
          * Handle +/- prefix, to respectively enable or disable the
-         * corresponding option. This enable to explicitly override defaults.
+         * corresponding option. This enables explicitly overriding defaults.
          */
         const bool disable = (start[0] == '-');
         if (disable || start[0] == '+')
@@ -1090,30 +1301,30 @@ tools_parse_controls(const char *raw, struct xkb_machine_options *options)
             case CONTROL_FIELD_OVERLAY8: {
                 static_assert(CONTROL_FIELD_OVERLAY1 == 0, "");
                 static_assert(
-                    XKB_KEYBOARD_CONTROL_OVERLAY1 ==
-                    (XKB_KEYBOARD_CONTROL_OVERLAY1 << CONTROL_FIELD_OVERLAY1),
+                    CONTROL_OVERLAY1 ==
+                    (CONTROL_OVERLAY1 << CONTROL_FIELD_OVERLAY1),
                     ""
                 );
                 static_assert(CONTROL_FIELD_OVERLAY2 == 1, "");
                 static_assert(
-                    XKB_KEYBOARD_CONTROL_OVERLAY2 ==
-                    (XKB_KEYBOARD_CONTROL_OVERLAY1 << CONTROL_FIELD_OVERLAY2),
+                    CONTROL_OVERLAY2 ==
+                    (CONTROL_OVERLAY1 << CONTROL_FIELD_OVERLAY2),
                     ""
                 );
                 static_assert(CONTROL_FIELD_OVERLAY3 == 2, "");
                 static_assert(
-                    XKB_KEYBOARD_CONTROL_OVERLAY3 ==
-                    (XKB_KEYBOARD_CONTROL_OVERLAY1 << CONTROL_FIELD_OVERLAY3),
+                    CONTROL_OVERLAY3 ==
+                    (CONTROL_OVERLAY1 << CONTROL_FIELD_OVERLAY3),
                     ""
                 );
                 static_assert(CONTROL_FIELD_OVERLAY8 == 7, "");
                 static_assert(
-                    XKB_KEYBOARD_CONTROL_OVERLAY8 ==
-                    (XKB_KEYBOARD_CONTROL_OVERLAY1 << CONTROL_FIELD_OVERLAY8),
+                    CONTROL_OVERLAY8 ==
+                    (CONTROL_OVERLAY1 << CONTROL_FIELD_OVERLAY8),
                     ""
                 );
                 const enum xkb_keyboard_control_flags flag =
-                    XKB_KEYBOARD_CONTROL_OVERLAY1 << type;
+                    CONTROL_OVERLAY1 << type;
                 ok = xkb_machine_options_update_boolean_ctrls(
                     options, flag, disable
                 );
@@ -1124,9 +1335,14 @@ tools_parse_controls(const char *raw, struct xkb_machine_options *options)
                     options, XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS, disable
                 );
                 break;
-            case CONTROL_FIELD_LATCH_TO_LOCK:
+            case CONTROL_FIELD_STICKY_KEYS_NO_SIMULTANEOUS_KEYS:
                 ok = xkb_machine_options_update_a11y_flags(
-                    options, XKB_A11Y_LATCH_TO_LOCK, disable
+                    options, XKB_A11Y_STICKY_KEYS_NO_SIMULTANEOUS_KEYS, disable
+                );
+                break;
+            case CONTROL_FIELD_STICKY_KEYS_LATCH_TO_LOCK:
+                ok = xkb_machine_options_update_a11y_flags(
+                    options, XKB_A11Y_STICKY_KEYS_LATCH_TO_LOCK, disable
                 );
                 break;
             case CONTROL_FIELD_LATCH_SIMULTANEOUS:
@@ -1134,11 +1350,21 @@ tools_parse_controls(const char *raw, struct xkb_machine_options *options)
                     options, XKB_A11Y_LATCH_SIMULTANEOUS_KEYS, disable
                 );
                 break;
+            case CONTROL_FIELD_MOUSE_KEYS:
+                ok = xkb_machine_options_update_boolean_ctrls(
+                    options, XKB_KEYBOARD_CONTROL_MOUSE_KEYS, disable
+                );
+                break;
+            case CONTROL_FIELD_SERVER_ACTIONS:
+                ok = xkb_machine_options_update_flags(
+                    options, XKB_MACHINE_SERVER_ACTIONS, disable
+                );
+                break;
             default:
                 {} /* Label followed by declaration requires C23 */
                 static_assert(
-                    CONTROL_FIELD_LATCH_SIMULTANEOUS == 10 &&
-                    CONTROL_FIELD_LATCH_SIMULTANEOUS + 1 == _NUM_CONTROL_FIELDS,
+                    CONTROL_FIELD_SERVER_ACTIONS == 13 &&
+                    CONTROL_FIELD_SERVER_ACTIONS + 1 == _NUM_CONTROL_FIELDS,
                     "missing case"
                 );
                 ret = false;
@@ -1325,7 +1551,12 @@ tools_set_modifiers_mappings(const struct xkb_machine_options *options,
             continue;
         }
 
-        if (xkb_machine_builder_remap_mods(builder, source, target) !=
+        const struct xkb_machine_builder_mods_remap_update update = {
+            .size = sizeof(update),
+            .source = source,
+            .target = target
+        };
+        if (xkb_machine_builder_update_mods_remap(builder, &update) !=
             XKB_SUCCESS) {
             fprintf(stderr,
                     "ERROR: cannot add modifiers mapping: "
@@ -1361,13 +1592,19 @@ tools_set_shortcuts_mask(const struct xkb_machine_options *options,
                          struct xkb_machine_builder *builder)
 {
     struct xkb_keymap *keymap = xkb_machine_builder_get_keymap(builder);
-    xkb_mod_mask_t mask = 0;
+    xkb_mod_mask_t mods = 0;
 
-    return (
-        tools_parse_mod_mask(keymap, &options->shortcuts.mask,
-                             "shortcut modifier mask", &mask) &&
-        !xkb_machine_builder_update_shortcut_mods(builder, mask, mask)
-    );
+    if (!tools_parse_mod_mask(keymap, &options->shortcuts.mask,
+                             "shortcut modifier mask", &mods))
+        return false;
+    const struct xkb_machine_builder_shortcut_override_update update = {
+        .size = sizeof(update),
+        .source = XKB_LAYOUT_INVALID,
+        .affect_mods = mods,
+        .mods = mods
+    };
+    return (xkb_machine_builder_update_shortcut_override(builder, &update) ==
+            XKB_SUCCESS);
 }
 
 static int
@@ -1476,12 +1713,17 @@ tools_set_shortcuts_mappings(const struct xkb_machine_options *options,
     darray_enumerate(source, target, options->shortcuts.mappings) {
         if (*target == XKB_LAYOUT_INVALID)
             continue;
-        const enum xkb_error_code error =
-            xkb_machine_builder_remap_shortcut_layout(builder, source, *target);
-        if (error != XKB_SUCCESS) {
+        const struct xkb_machine_builder_shortcut_override_update update = {
+            .size = sizeof(update),
+            .source = source,
+            .target = *target,
+        };
+        const enum xkb_status status =
+            xkb_machine_builder_update_shortcut_override(builder, &update);
+        if (status != XKB_SUCCESS) {
             fprintf(stderr,
                     "ERROR %d: cannot add shortcuts layout mapping: "
-                    "%"PRIu32" -> %"PRIu32"\n", error, source + 1, *target + 1);
+                    "%"PRIu32" -> %"PRIu32"\n", status, source + 1, *target + 1);
             ret = false;
         }
     }
@@ -1493,18 +1735,27 @@ struct xkb_machine_builder *
 xkb_machine_builder_new_from_options(struct xkb_keymap *keymap,
                                      const struct xkb_machine_options *options)
 {
+    const struct xkb_machine_builder_config config = {
+        .size = sizeof(config),
+        .builder_flags = XKB_MACHINE_BUILDER_NO_FLAGS,
+        .machine_flags = options->machine_flags,
+    };
     struct xkb_machine_builder * const builder =
-        xkb_machine_builder_new(keymap, XKB_MACHINE_BUILDER_NO_FLAGS);
+        xkb_machine_builder_new(keymap, &config, NULL);
     if (!builder)
         return NULL;
 
-    if ((unsigned)(xkb_machine_builder_update_a11y_flags(
-            builder, options->controls.a11y.affect, options->controls.a11y.flags
-        ) != XKB_SUCCESS) |
+    const struct xkb_machine_builder_a11y_update a11y_update = {
+        .size = sizeof(a11y_update),
+        .affect_flags = options->controls.a11y.affect_flags,
+        .flags = options->controls.a11y.flags
+    };
+    if ((unsigned)(xkb_machine_builder_update_a11y(builder, &a11y_update) !=
+                   XKB_SUCCESS) |
         (unsigned)!tools_set_modifiers_mappings(options, builder) |
-        (unsigned)!tools_set_shortcuts_mask(options, builder) |
-        (unsigned)!tools_set_shortcuts_mappings(options, builder)) {
-            xkb_machine_builder_destroy(builder);
+        (unsigned)!tools_set_shortcuts_mappings(options, builder) |
+        (unsigned)!tools_set_shortcuts_mask(options, builder)) {
+            xkb_machine_builder_unref(builder);
             return NULL;
     }
 

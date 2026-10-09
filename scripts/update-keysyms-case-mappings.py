@@ -8,7 +8,7 @@
 
 """
 There are two kinds of keysyms to consider:
-• Legacy keysyms: their case mappings is located at `data/keysyms.yaml`.
+• Legacy keysyms: their case mappings is located at `data/keysyms/list.yaml`.
 • Unicode keysyms: their case mappings come from the ICU library.
 
 These mappings would create huge lookup tables if done naively. Fortunately,
@@ -74,12 +74,14 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import importlib.util
 import itertools
 import math
 import os
 import re
 import sys
 import textwrap
+import unicodedata
 from abc import ABCMeta, abstractmethod
 from collections import defaultdict
 from collections.abc import Callable
@@ -87,7 +89,6 @@ from ctypes.util import find_library
 from dataclasses import dataclass
 from enum import Enum, unique
 from functools import cache, reduce
-import importlib.util
 from pathlib import Path
 from typing import (
     Any,
@@ -103,7 +104,6 @@ from typing import (
     TypeVar,
     cast,
 )
-import unicodedata
 
 import jinja2
 import yaml
@@ -1674,7 +1674,7 @@ class SeparateLegacyKeysymsAndUnicodeCombinedCaseMappings:
     def generate(cls, root: Path, write: bool, config: Config) -> None:
         s = cls.optimize(
             config=config,
-            path=root / "data/keysyms.yaml",
+            path=root / "data/keysyms/list.yaml",
         )
         s.test(config)
         if write:
@@ -1935,7 +1935,7 @@ class Strategy(Enum):
         for strategy in strategies:
             print(f" Optimizing using {strategy.name} ".center(90, "="))
             sol = strategy.value.optimize(
-                config=config, path=root / "data/keysyms.yaml"
+                config=config, path=root / "data/keysyms/list.yaml"
             )
             sol.test(config)
             results.append(sol)

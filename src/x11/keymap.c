@@ -8,6 +8,7 @@
 #include <assert.h>
 #include <xcb/xkb.h>
 
+#include "darray.h"
 #include "xkbcommon/xkbcommon.h"
 #include "xkbcommon/xkbcommon-keysyms.h"
 #include "atom.h"
@@ -206,7 +207,7 @@ translate_action(union xkb_action *action, const xcb_xkb_action_t *wire,
     case XCB_XKB_SA_TYPE_SET_GROUP:
         action->type = ACTION_TYPE_GROUP_SET;
 
-        action->group.group = wire->setgroup.group;
+        action->group.group = (int32_t)wire->setgroup.group;
 
         if (wire->setmods.flags & XCB_XKB_SA_CLEAR_LOCKS)
             action->group.flags |= ACTION_LOCK_CLEAR;
@@ -219,7 +220,7 @@ translate_action(union xkb_action *action, const xcb_xkb_action_t *wire,
     case XCB_XKB_SA_TYPE_LATCH_GROUP:
         action->type = ACTION_TYPE_GROUP_LATCH;
 
-        action->group.group = wire->latchgroup.group;
+        action->group.group = (int32_t)wire->latchgroup.group;
 
         if (wire->latchmods.flags & XCB_XKB_SA_CLEAR_LOCKS)
             action->group.flags |= ACTION_LOCK_CLEAR;
@@ -232,7 +233,7 @@ translate_action(union xkb_action *action, const xcb_xkb_action_t *wire,
     case XCB_XKB_SA_TYPE_LOCK_GROUP:
         action->type = ACTION_TYPE_GROUP_LOCK;
 
-        action->group.group = wire->lockgroup.group;
+        action->group.group = (int32_t)wire->lockgroup.group;
 
         if (wire->lockgroup.flags & XCB_XKB_SA_ISO_LOCK_FLAG_GROUP_ABSOLUTE)
             action->group.flags |= ACTION_ABSOLUTE_SWITCH;
@@ -245,7 +246,7 @@ translate_action(union xkb_action *action, const xcb_xkb_action_t *wire,
         action->ptr.y = (int16_t) (wire->moveptr.yLow | ((uint16_t) wire->moveptr.yHigh << 8));
 
         if (!(wire->moveptr.flags & XCB_XKB_SA_MOVE_PTR_FLAG_NO_ACCELERATION))
-            action->ptr.flags |= ACTION_ACCEL;
+            action->ptr.flags |= ACTION_REPEAT;
         if (wire->moveptr.flags & XCB_XKB_SA_MOVE_PTR_FLAG_MOVE_ABSOLUTE_X)
             action->ptr.flags |= ACTION_ABSOLUTE_X;
         if (wire->moveptr.flags & XCB_XKB_SA_MOVE_PTR_FLAG_MOVE_ABSOLUTE_Y)
@@ -264,6 +265,7 @@ translate_action(union xkb_action *action, const xcb_xkb_action_t *wire,
         action->type = ACTION_TYPE_PTR_LOCK;
 
         action->btn.button = wire->lockptrbtn.button;
+        action->btn.count = 0;
 
         if (wire->lockptrbtn.flags & XCB_XKB_SA_ISO_LOCK_FLAG_NO_LOCK)
             action->btn.flags |= ACTION_LOCK_NO_LOCK;
@@ -323,9 +325,11 @@ translate_action(union xkb_action *action, const xcb_xkb_action_t *wire,
          * vmod values. Real modifiers are fine though. See:
          * https://gitlab.freedesktop.org/xorg/proto/xorgproto/-/merge_requests/105
          */
-        action->redirect.affect = translate_mods(wire->redirect.mask,
-                                                 wire->redirect.vmodsMaskLow,
-                                                 wire->redirect.vmodsMaskHigh);
+        action->redirect.affect_mods = translate_mods(
+            wire->redirect.mask,
+            wire->redirect.vmodsMaskLow,
+            wire->redirect.vmodsMaskHigh
+        );
         action->redirect.mods = translate_mods(wire->redirect.realModifiers,
                                                wire->redirect.vmodsLow,
                                                wire->redirect.vmodsHigh);
@@ -703,6 +707,8 @@ get_modmaps(struct xkb_keymap *keymap, xcb_connection_t *conn,
     xcb_xkb_key_mod_map_iterator_t iter =
         xcb_xkb_get_map_map_modmap_rtrn_iterator(reply, map);
 
+    darray(ModMapEntry) modmaps = darray_new();
+
     for (int i = 0; i < length; i++) {
         xcb_xkb_key_mod_map_t *wire = iter.data;
         struct xkb_key *key;
@@ -713,12 +719,21 @@ get_modmaps(struct xkb_keymap *keymap, xcb_connection_t *conn,
         key = &keymap->keys[wire->keycode];
         key->modmap = wire->mods;
 
+        darray_append(modmaps, (ModMapEntry) {
+            .keyCode = key->keycode,
+            .mods = key->modmap,
+            .haveSymbol = false,
+            .u.keyName = key->name
+        });
+
         xcb_xkb_key_mod_map_next(&iter);
     }
 
+    darray_steal(modmaps, &keymap->modmaps, &keymap->num_modmaps);
     return true;
 
 fail:
+    darray_free(modmaps);
     return false;
 }
 

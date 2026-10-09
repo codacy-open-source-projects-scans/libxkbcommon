@@ -26,6 +26,25 @@ test_configh_data.set_quoted(
     meson.current_source_dir() / 'data',
 )
 test_configh_data.set('_FORTIFY_SOURCE', '3')
+
+pymod = import('python')
+python = pymod.find_installation('python3', required: false)
+if python.found()
+    script = find_program('../scripts/gen-evdev-scancodes-lookup.py')
+    evdev_scancodes_lookup = custom_target(
+        'evdev-scancodes-lookup',
+        build_by_default: true,
+        command: [
+            script,
+            files('evdev-scancodes.h'),
+        ],
+        output: 'evdev-scancodes-lookup.h',
+        capture: true,
+        install: false,
+    )
+    test_configh_data.set10('HAS_EVDEV_SCANCODES_LOOKUP', true)
+endif
+
 configure_file(output: 'test-config.h', configuration: test_configh_data)
 
 # Headers C++ compatibility test (optional)
@@ -68,7 +87,7 @@ test_shared_lib = static_library(
         '../src/utils.c',
         'common.c',
         'compose-iter.c',
-        'utils-text.c',
+        'util-text.c',
     ],
     include_directories: include_directories(
         '..',  # required to #include "config.h" in subdirs
@@ -204,7 +223,6 @@ test(
 )
 
 # The merge modes tests are optional and generated locally on-the-fly
-pymod = import('python')
 python = pymod.find_installation('python3', modules: ['jinja2'], required: false)
 has_merge_modes_tests = python.found() and python.language_version().version_compare(
     '>=3.11',
@@ -326,6 +344,22 @@ test(
         '../tools/messages.c',
         include_directories: include_directories('../tools'),
         dependencies: test_dep,
+    ),
+    env: test_env,
+)
+test(
+    'quick-guide',
+    executable('quick-guide', 'quick-guide.c', dependencies: test_dep),
+    env: test_env,
+)
+test(
+    'typing',
+    executable(
+        'typing',
+        'typing.c',
+        '../src/typing.c',
+        evdev_scancodes_lookup,
+        dependencies: test_dep
     ),
     env: test_env,
 )

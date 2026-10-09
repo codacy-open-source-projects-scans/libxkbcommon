@@ -12,7 +12,7 @@ components.
 
 @tableofcontents{html:2}
 
-`libxkbcommon`’s keymap compiler `xkbcomp` uses the `xkb_component_names`
+`xkbcommon`’s keymap compiler uses the `xkb_component_names`
 struct internally, which maps directly to [include statements] of the
 appropriate [sections] \(called [KcCGST] for short):
 
@@ -168,7 +168,38 @@ This wild card usually appears near the end of a rule set to set *default* value
 It is advised to look at a file like `rules/evdev` along with
 this grammar.
 
-@note Comments, whitespace, etc. are not shown.
+<dl>
+<dt>`<ident>`</dt>
+<dd>
+Denotes a lexical identifier: a non-empty maximal sequence of printable ASCII
+characters in the range `!` – `~`, excluding backslash `\`.
+The first character shall not be one of `!`, `=`, `$`, `*`, or `<`.
+</dd>
+<dt>`<kccgst-ident>`</dt>
+<dd>
+Same as `<ident>`, except it excludes also merge mode characters `+|^` and
+the qualifier prefix `:`.
+</dd>
+</dl>
+
+@remark It is recommended to avoid any unnecessary punctuation in identifiers,
+because later versions of the rules may assign syntactic meaning to characters
+that are currently unreserved.
+
+@note *Whitespace*, except line feed `\n`, may appear between lexical tokens
+unless explicitly prohibited by the lexical grammar. It is not shown in the
+productions below.
+
+@note The sequence consisting of a backslash `\`, an optional carriage return
+`\r` and a line feed `\n` is discarded during lexical analysis. It serves only
+to allow a grammar production to span multiple physical lines and does not
+affect tokenization.
+
+@note A comment begins with `//` and extends to, but does not include, the next
+line feed `\n` or the end of the input.
+
+@note In the following, comments are treated as whitespace and are omitted
+from the grammar.
 
 ```bnf
 File         ::= { "!" (Include | Group | RuleSet) }
@@ -181,17 +212,29 @@ GroupElement ::= <ident>
 
 RuleSet      ::= Mapping { Rule }
 
-Mapping      ::= { Mlvo } "=" { Kccgst } "\n"
+Mapping      ::= Mlvo { Mlvo } "=" Kccgst { Kccgst } "\n"
 Mlvo         ::= "model" | "option" | ("layout" | "variant") [ Index ]
-Index        ::= "[" ({ NumericIndex } | { SpecialIndex }) "]"
+Index        ::= "[" (NumericIndex | SpecialIndex) "]"
 NumericIndex ::= 1..XKB_MAX_GROUPS
-SpecialIndex ::= "single" | "first" | "later" | "any"
+SpecialIndex ::= "single" | "first" | "later" | "multiple" | "any"
 Kccgst       ::= "keycodes" | "symbols" | "types" | "compat" | "geometry"
 
-Rule         ::= { MlvoValue } "=" { KccgstValue } "\n"
-MlvoValue    ::= "*" | "<none>" | "<some>" | "<any>" | GroupName | <ident>
-KccgstValue  ::= <ident> [ { Qualifier } ]
-Qualifier    ::= ":" ({ NumericIndex } | "all")
+Rule         ::= MlvoValue { MlvoValue } "=" KccgstValue { KccgstValue } "\n"
+MlvoValue    ::= Wildcard | GroupName | <ident>
+Wildcard     ::= "*" | "<none>" | "<some>" | "<any>"
+KccgstValue  ::= <kccgst-value>
+```
+
+The following is a subgrammar for `<kccgst-value>`:
+
+@important In the following grammar, *whitespace* is prohibited between lexical
+tokens unless explicitly allowed.
+
+```bnf
+<kccgst-value>  ::= [ MergeMode ] KccgstEntry { MergeMode KccgstEntry }
+MergeMode       ::= "+" | "|" | "^"
+KccgstEntry     ::= <kccgst-ident> [ ":" KccgstQualifier ]
+KccgstQualifier ::= "%i" | "all" | NumericIndex
 ```
 
 <!--
@@ -218,7 +261,7 @@ or %%H seems to do the job though.
         `/usr/share/X11/xkb/rules`).
     </dd>
   </dl>
-  **Note:** This feature is supported by libxkbcommon but not by the legacy X11
+  **Note:** This feature is supported by xkbcommon but not by the legacy X11
   tools.
 
 - @anchor rules-extended-layout-indices
@@ -227,29 +270,36 @@ or %%H seems to do the job though.
   clarify the semantics:
 
   <dl>
-    <dt>`single`</dt>
+    <dt>`single` @anchor rules-layout-index-single</dt>
     <dd>
         Matches a single layout; `layout[single]` is the same as without
         explicit index: `layout`.
     </dd>
-    <dt>`first`</dt>
+    <dt>`first` @anchor rules-layout-index-first</dt>
     <dd>
         Matches the first layout/variant, no matter how many layouts are in
         the RMLVO configuration. Acts as both `layout` and `layout[1]`.
     </dd>
-    <dt>`later`</dt>
+    <dt>`later` @anchor rules-layout-index-later</dt>
     <dd>
         Matches all but the first layout. This is an index *range*.
-        Acts as `layout[2]` .. `layout[4]`.
+        Acts as `layout[2]` .. `layout[32]`.
     </dd>
-    <dt>any</dt>
+    <dt>`multiple` @anchor rules-layout-index-multiple</dt>
     <dd>
-        Matches layout at any position. This is an index *range*.
-        Acts as `layout`, `layout[1]` .. `layout[4]`.
+        Matches layouts at any position, but only if there are *at least 2 layouts*.
+        This is an index *range*. Acts as `layout[1]` .. `layout[32]`.
+
+        Available since version `1.14.0`.
+    </dd>
+    <dt>`any` @anchor rules-layout-index-any</dt>
+    <dd>
+        Matches layouts at any position. This is an index *range*.
+        Acts as `layout`, `layout[1]` .. `layout[32]`.
     </dd>
   </dl>
 
-  When using a layout index *range* (`later`, `any`), the @ref rules-i-expansion "%i expansion"
+  When using a layout index *range* (`later`, `multiple`, `any`), the @ref rules-i-expansion "%i expansion"
   can be used in the `KccgstValue` to refer to the index of the matched layout.
 
 - The order of values in a `Rule` must be the same as the `Mapping` it
@@ -513,6 +563,9 @@ Using the following example:
 
 ! layout[3] = symbols
   *         = +%l[3]%(v[3]):3
+
+! layout[4] = symbols
+  *         = +%l[4]%(v[4]):4
 ```
 
 we would have the following resolutions of <em>[symbols]</em>:
@@ -528,10 +581,10 @@ Since version `1.8.0`, the previous code can be replaced with simply:
 
 ```c
 ! layout[first] = symbols
-  *             = pc+%l[%i]%(v[%i])
+  *             = pc
 
-! layout[later] = symbols
-  *             = +%l[%i]%(v[%i]):%i
+! layout[any] = symbols
+  *           = +%l[%i]%(v[%i]):%i
 ```
 
 ### Example: layout, option and symbols {#rules-options-example}
@@ -612,7 +665,7 @@ Using the following example:
   *             = pc
 
 ! layout[any] = symbols
-  *           = %l[%i]%(v[%i])
+  *           = +%l[%i]%(v[%i])
 
 // Not layout-specific
 ! option      = symbols

@@ -37,7 +37,7 @@ test_libxkbcommon_enums(void)
     } tests[] = {
 #define ENUM(feature, values, flag) { (feature), (flag), STRINGIFY(feature), (values), ARRAY_SIZE(values) }
         ENUM(XKB_FEATURE_ENUM_FEATURE, xkb_feature_values, ENUM_NONE),
-        ENUM(XKB_FEATURE_ENUM_ERROR_CODE, xkb_error_code_values, ENUM_NONE),
+        ENUM(XKB_FEATURE_ENUM_STATUS, xkb_status_values, ENUM_NONE),
         ENUM(XKB_FEATURE_ENUM_CONTEXT_FLAGS, xkb_context_flags_values, ENUM_FLAG),
         ENUM(XKB_FEATURE_ENUM_LOG_LEVEL, xkb_log_level_values, ENUM_NONE),
         ENUM(XKB_FEATURE_ENUM_KEYSYM_FLAGS, xkb_keysym_flags_values, ENUM_FLAG),
@@ -54,8 +54,11 @@ test_libxkbcommon_enums(void)
         ENUM(XKB_FEATURE_ENUM_STATE_MATCH, xkb_state_match_values, ENUM_FLAG),
         ENUM(XKB_FEATURE_ENUM_CONSUMED_MODE, xkb_consumed_mode_values, ENUM_NONE),
         ENUM(XKB_FEATURE_ENUM_MACHINE_BUILDER_FLAGS, xkb_machine_builder_flags_values, ENUM_FLAG),
+        ENUM(XKB_FEATURE_ENUM_MACHINE_FLAGS, xkb_machine_flags_values, ENUM_FLAG),
         ENUM(XKB_FEATURE_ENUM_EVENT_TYPE, xkb_event_type_values, ENUM_NONE),
         ENUM(XKB_FEATURE_ENUM_KEY_DIRECTION, xkb_key_direction_values, ENUM_NONE),
+        ENUM(XKB_FEATURE_ENUM_POINTER_MOTION_FLAGS, xkb_pointer_motion_flags_values, ENUM_FLAG),
+        ENUM(XKB_FEATURE_ENUM_POINTER_BUTTON_STATE, xkb_pointer_button_state_values, ENUM_FLAG),
         ENUM(XKB_FEATURE_ENUM_EVENTS_FLAGS, xkb_events_flags_values, ENUM_FLAG),
         ENUM(XKB_FEATURE_ENUM_COMPOSE_FORMAT, xkb_compose_format_values, ENUM_NONE),
         ENUM(XKB_FEATURE_ENUM_COMPOSE_COMPILE_FLAGS, xkb_compose_compile_flags_values, ENUM_FLAG),
@@ -87,6 +90,9 @@ test_libxkbcommon_enums(void)
             max = MAX(max, (int32_t)tests[t].values[v]);
         }
 
+        assert(min >= ENUM_LOWEST_VALUE);
+        assert(max <= ENUM_HIGHEST_VALUE);
+
         const enum xkb_feature feature = tests[t].feature;
         if (tests[t].properties & ENUM_FLAG) {
             /* Flag enum */
@@ -94,17 +100,18 @@ test_libxkbcommon_enums(void)
             /* Explicit zero */
             assert(has_zero ^ !xkb_feature_supported(feature, 0));
             /* No negative values */
-            assert(min >= 0);
+            static_assert(ENUM_LOWEST_FLAG_VALUE == 0, "");
+            assert(min >= ENUM_LOWEST_FLAG_VALUE);
             assert(!xkb_feature_supported(feature, (uint32_t)-1));
             assert(!xkb_feature_supported(feature, (uint32_t)INT_MIN));
             assert(!xkb_feature_supported(feature, (uint32_t)INT32_MIN));
             /* No high positive values */
-            #define ENUM_HIGHEST_VALUE XKB_STATE_MATCH_NON_EXCLUSIVE
-            assert(max <= ENUM_HIGHEST_VALUE);
+            assert(max <= ENUM_HIGHEST_FLAG_VALUE);
             /* Invalid mask */
-            static_assert(ENUM_HIGHEST_VALUE < (INT32_MAX >> 1), "");
-            assert(!xkb_feature_supported(feature, (ENUM_HIGHEST_VALUE << 1)));
-            #undef ENUM_HIGHEST_VALUE
+            static_assert(ENUM_HIGHEST_FLAG_VALUE < (INT32_MAX >> 1), "");
+            assert(!xkb_feature_supported(
+                feature, (uint32_t)(ENUM_HIGHEST_FLAG_VALUE << 1))
+            );
             if (max > 0) {
                 assert(!xkb_feature_supported(feature, (max << 1)));
                 assert(!xkb_feature_supported(feature, max | (max << 1)));

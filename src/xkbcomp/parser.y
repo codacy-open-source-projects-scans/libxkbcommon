@@ -16,6 +16,7 @@
 
 #include "scanner-utils.h"
 #include "xkbcomp/ast.h"
+#include "xkbcomp/xkbcomp-priv.h"
 }
 
 %{
@@ -32,8 +33,13 @@ struct parser_param {
     struct xkb_context *ctx;
     struct scanner *scanner;
     XkbFile *rtrn;
+    struct parser_keymap_config config;
     bool more_maps;
 };
+
+#define parser_log_with_code(param, level, verbosity, log_msg_id, fmt, ...)   \
+    scanner_log_with_code((param)->scanner, level, verbosity, log_msg_id, fmt,\
+                          ##__VA_ARGS__)
 
 #define parser_err(param, error_id, fmt, ...) \
     scanner_err((param)->scanner, error_id, fmt, ##__VA_ARGS__)
@@ -158,6 +164,7 @@ resolve_keysym(struct parser_param *param, struct sval name, xkb_keysym_t *sym_r
         KEYPAD_KEYS             75 "keypad_keys"
         FUNCTION_KEYS           76 "function_keys"
         ALTERNATE_GROUP         77 "alternate_group"
+        DEPRECATED              78 "deprecated"
 
 %right  EQUALS
 %left   PLUS MINUS
@@ -306,6 +313,11 @@ XkbMapConfig    :       OptFlags FileType OptMapName OBRACE
                             DeclList
                         CBRACE SEMI
                         {
+                            if ($1 & MAP_IS_DEPRECATED) {
+                                parser_warn(param, XKB_WARNING_DEPRECATED_SECTION,
+                                            "deprecated section: \"%s\"",
+                                            safe_map_name($3));
+                            }
                             $$ = XkbFileCreate($2, $3, $5.head, $1);
                         }
                 ;
@@ -333,6 +345,22 @@ Flag            :       PARTIAL                 { $$ = MAP_IS_PARTIAL; }
                 |       KEYPAD_KEYS             { $$ = MAP_HAS_KEYPAD; }
                 |       FUNCTION_KEYS           { $$ = MAP_HAS_FN; }
                 |       ALTERNATE_GROUP         { $$ = MAP_IS_ALTGR; }
+                |       DEPRECATED              { $$ = MAP_IS_DEPRECATED; }
+                |       IDENT
+                        {
+                            const bool error = (param->config.strict & PARSER_NO_UNKNOWN_SECTION_FLAGS);
+                            parser_log_with_code(
+                                param, (error ? XKB_LOG_LEVEL_ERROR : XKB_LOG_LEVEL_WARNING),
+                                XKB_LOG_VERBOSITY_MINIMAL,
+                                XKB_ERROR_UNKNOWN_SECTION_FLAG,
+                                "Unknown section flag \"%.*s\"%s",
+                                (unsigned)$1.len, $1.start,
+                                (error ? "" : "; ignored")
+                            );
+                            if (error)
+                                YYABORT;
+                            $$ = 0;
+                        }
                 ;
 
 DeclList        :       DeclList Decl
@@ -589,8 +617,21 @@ GroupCompatDecl :       GROUP Integer EQUALS Expr SEMI
                         { $$ = GroupCompatCreate($2, $4); }
                 ;
 
-ModMapDecl      :       MODIFIER_MAP Ident OBRACE KeyOrKeySymList CBRACE SEMI
-                        { $$ = ModMapCreate($2, $4.head); }
+ModMapDecl      :       MODIFIER_MAP Expr OBRACE KeyOrKeySymList CBRACE SEMI
+                        {
+                            if (param->config.format == XKB_KEYMAP_FORMAT_TEXT_V1 &&
+                                $2->common.type != STMT_EXPR_IDENT) {
+                                    parser_err(
+                                        param, XKB_ERROR_INVALID_MODIFIER_MAP_MASK,
+                                        "Invalid real modifier mask in modifier "
+                                        "map definition: expected identifier"
+                                    );
+                                    FreeStmt((ParseCommon *) $2);
+                                    FreeStmt((ParseCommon *) $4.head);
+                                    YYERROR;
+                            }
+                            $$ = ModMapCreate($2, $4.head);
+                        }
                 ;
 
 KeyOrKeySymList :       KeyOrKeySymList COMMA KeyOrKeySym
@@ -1073,7 +1114,8 @@ MapName         :       STRING  { $$ = $1; }
 
 /* Parse a specific section */
 XkbFile *
-parse(struct xkb_context *ctx, struct scanner *scanner, const char *map)
+parse(struct xkb_context *ctx, const struct parser_keymap_config *config,
+      struct scanner *scanner, const char *map)
 {
     int ret;
     XkbFile *first = NULL;
@@ -1081,6 +1123,7 @@ parse(struct xkb_context *ctx, struct scanner *scanner, const char *map)
         .scanner = scanner,
         .ctx = ctx,
         .rtrn = NULL,
+        .config = *config,
         .more_maps = false,
     };
 
@@ -1121,25 +1164,32 @@ parse(struct xkb_context *ctx, struct scanner *scanner, const char *map)
         return NULL;
     }
 
-    if (first)
+    /*
+     * Warn about implicit default section,
+     * but only if not a keymap: multiple keymaps per file not supported
+     */
+    if (first && first->file_type != FILE_TYPE_KEYMAP)
         log_vrb(ctx, XKB_LOG_VERBOSITY_DETAILED,
                 XKB_WARNING_MISSING_DEFAULT_SECTION,
-                "No map in include statement, but \"%s\" contains several; "
-                "Using first defined map, \"%s\"\n",
-                scanner->file_name, safe_map_name(first));
+                "No section name in include statement, but \"%s\" contains several; "
+                "Using first defined section, \"%s\"\n",
+                scanner->file_name, safe_map_name(first->name));
 
     return first;
 }
 
 /* Parse the next section */
 bool
-parse_next(struct xkb_context *ctx, struct scanner *scanner, XkbFile **xkb_file)
+parse_next(struct xkb_context *ctx,
+           const struct parser_keymap_config *config,
+           struct scanner *scanner, XkbFile **xkb_file)
 {
     int ret;
     struct parser_param param = {
         .scanner = scanner,
         .ctx = ctx,
         .rtrn = NULL,
+        .config = *config,
         .more_maps = false,
     };
 

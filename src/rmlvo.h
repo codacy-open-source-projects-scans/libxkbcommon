@@ -19,6 +19,11 @@ enum RMLVO {
     RMLVO_OPTIONS = (1 << 4)
 };
 
+enum {
+    /** Value of the layout mask for layout-independent options */
+    XKB_OPTION_LAYOUT_MASK_GLOBAL = 0
+};
+
 struct xkb_rmlvo_builder_layout {
     char *layout;
     char *variant;
@@ -28,7 +33,7 @@ typedef darray(struct xkb_rmlvo_builder_layout) xkb_rmlvo_builder_layouts;
 
 struct xkb_rmlvo_builder_option {
     char *option;
-    xkb_layout_index_t layout;
+    xkb_layout_mask_t layouts;
 };
 
 typedef darray(struct xkb_rmlvo_builder_option) xkb_rmlvo_builder_options;

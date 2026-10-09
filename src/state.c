@@ -29,8 +29,9 @@
 #include <string.h>
 
 #include "xkbcommon/xkbcommon.h"
-#include "xkbcommon/xkbcommon-errors.h"
+#include "xkbcommon/xkbcommon-status.h"
 #include "xkbcommon/xkbcommon-features.h"
+#include "abi-check.h"
 #include "darray.h"
 #include "features/enums.h"
 #include "keymap.h"
@@ -40,7 +41,7 @@
 #include "utf8.h"
 #include "utils.h"
 #include "util-mem.h"
-#include "utils-numbers.h"
+#include "util-numbers.h"
 
 /*
  * @struct xkb_events
@@ -55,16 +56,19 @@
  * on each `process_*` call.
  *
  * @warning Not thread-safe. Must only be used from a single thread.
- * For multi-threaded use, we need a future `xkb_events_new_queue()` will
+ *
+ * @todo For multi-threaded use, we need a future `xkb_event` **queue** to
  * provide a thread-safe implementation (e.g. circular buffer).
  */
 struct xkb_events {
+    struct xkb_context *ctx;
+    darray(struct xkb_event) queue;
     /**
-     * Read cursor for `xkb_events_next()`. Reset to 0 on each `process_*` call.
+     * Read cursor for `xkb_events_next()`.
+     *
+     * Reset to 0 on each `process_*` call.
      */
     darray_size_t next;
-    darray(struct xkb_event) queue;
-    struct xkb_context *ctx;
 };
 
 struct xkb_server_state;
@@ -149,6 +153,11 @@ struct xkb_client_state {
     struct xkb_state base;
 };
 
+enum state_flags {
+    STATE_NO_FLAGS = 0,
+    STATE_REQUIRE_KEY_EVENT = (1 << 0),
+};
+
 /**
  * Legacy server state, used for `LEGACY_MIXED_STATE` and `LEGACY_SERVER_STATE`
  * modes.
@@ -165,6 +174,8 @@ struct xkb_server_state {
 
     /* NOTE: if we ever add other flags types, we could merge them internally */
     enum xkb_a11y_flags flags;
+
+    enum state_flags update_flags;
 
     /*
      * At each event, we accumulate all the needed modifications to the base
@@ -233,11 +244,7 @@ xkb_state_key_get_level(struct xkb_state *state, xkb_keycode_t kc,
 static inline xkb_layout_index_t
 state_key_get_layout(struct xkb_state *state, const struct xkb_key *key)
 {
-    static_assert(XKB_MAX_GROUPS < INT32_MAX, "Max groups don't fit");
-    return XkbWrapGroupIntoRange((int32_t) state->components.group,
-                                 key->num_groups,
-                                 key->out_of_range_group_policy,
-                                 key->out_of_range_group_number);
+    return xkb_keymap_key_effective_layout(key, state->components.group);
 }
 
 /**
@@ -400,7 +407,7 @@ get_state_component_changes(const struct state_components *a,
     if (a->leds != b->leds)
         mask |= XKB_STATE_LEDS;
     if (a->controls != b->controls)
-        mask |= XKB_STATE_CONTROLS;
+        mask |= XKB_STATE_CONTROLS_EFFECTIVE;
 
     return mask;
 }
@@ -472,6 +479,7 @@ xkb_filter_group_lock_func(struct xkb_server_state *state,
 
 static bool
 xkb_action_breaks_latch(const union xkb_action *action,
+                        enum xkb_action_controls controls,
                         enum xkb_internal_action_flags flag,
                         xkb_mod_mask_t mask)
 {
@@ -486,6 +494,9 @@ xkb_action_breaks_latch(const union xkb_action *action,
     case ACTION_TYPE_TERMINATE:
     case ACTION_TYPE_REDIRECT_KEY:
         return true;
+    case ACTION_TYPE_PTR_MOVE:
+    case ACTION_TYPE_PTR_DEFAULT:
+        return !(controls & CONTROL_MOUSE_KEYS);
     case ACTION_TYPE_INTERNAL:
         return (action->internal.flags & flag) &&
                ((action->internal.clear_latched_mods & mask) == mask);
@@ -580,6 +591,7 @@ xkb_filter_group_latch_func(struct xkb_server_state *state,
                  */
                 for (xkb_action_count_t k = 0; k < count; k++) {
                     if (xkb_action_breaks_latch(&(actions[k]),
+                                                state->base.components.controls,
                                                 INTERNAL_BREAKS_GROUP_LATCH,
                                                 0)) {
                         latch = NO_LATCH;
@@ -625,6 +637,7 @@ xkb_filter_group_latch_func(struct xkb_server_state *state,
                     continue;
                 }
                 else if (xkb_action_breaks_latch(&(actions[k]),
+                                                 state->base.components.controls,
                                                  INTERNAL_BREAKS_GROUP_LATCH,
                                                  0)) {
                     /* Breaks the latch */
@@ -867,6 +880,7 @@ xkb_filter_mod_latch_func(struct xkb_server_state *state,
                  */
                 for (xkb_action_count_t k = 0; k < count; k++) {
                     if (xkb_action_breaks_latch(&(actions[k]),
+                                                state->base.components.controls,
                                                 INTERNAL_BREAKS_MOD_LATCH,
                                                 filter->action.mods.mods.mask)) {
                         latch = NO_LATCH;
@@ -913,6 +927,7 @@ xkb_filter_mod_latch_func(struct xkb_server_state *state,
                     return XKB_FILTER_CONSUME;
                 }
                 else if (xkb_action_breaks_latch(&(actions[k]),
+                                                 state->base.components.controls,
                                                  INTERNAL_BREAKS_MOD_LATCH,
                                                  filter->action.mods.mods.mask)) {
                     /* XXX: This may be totally broken, we might need to break the
@@ -977,6 +992,142 @@ xkb_filter_mod_latch_func(struct xkb_server_state *state,
 
     return XKB_FILTER_CONTINUE;
 }
+
+static void
+append_pointer_move(struct xkb_events *events,
+                    struct xkb_filter *filter)
+{
+    enum xkb_pointer_motion_flags flags = 0;
+    if (filter->action.ptr.flags & ACTION_ABSOLUTE_X)
+        flags |= XKB_POINTER_MOTION_ABSOLUTE_X;
+    if (filter->action.ptr.flags & ACTION_ABSOLUTE_Y)
+        flags |= XKB_POINTER_MOTION_ABSOLUTE_Y;
+    if (filter->action.ptr.flags & ACTION_REPEAT)
+        flags |= XKB_POINTER_MOTION_REPEATS;
+    darray_append(events->queue, (struct xkb_event) {
+        .ctx = events->ctx, /* borrowed from events */
+        .type = XKB_EVENT_TYPE_POINTER_MOTION,
+        .pointer_motion = {
+            .size = sizeof(((struct xkb_event*)0)->pointer_motion),
+            .flags = flags,
+            .x = filter->action.ptr.x,
+            .y = filter->action.ptr.y,
+        }
+    });
+}
+
+static void
+xkb_filter_pointer_move_new(struct xkb_server_state *state,
+                            struct xkb_events *events,
+                            struct xkb_filter *filter)
+{
+    if (!events) {
+        filter->func = NULL;
+        return;
+    }
+
+    assert(state->base.components.controls & XKB_KEYBOARD_CONTROL_MOUSE_KEYS);
+    append_pointer_move(events, filter);
+    state->update_flags &= ~STATE_REQUIRE_KEY_EVENT;
+}
+
+static bool
+xkb_filter_pointer_move_func(struct xkb_server_state *state,
+                             struct xkb_events *events,
+                             struct xkb_filter *filter,
+                             const struct xkb_key *key,
+                             enum xkb_key_direction direction)
+{
+    if (key != filter->key || !events)
+        return XKB_FILTER_CONTINUE;
+
+    state->update_flags &= ~STATE_REQUIRE_KEY_EVENT;
+
+    switch (direction) {
+    case XKB_KEY_DOWN:
+        filter->refcnt++;
+        append_pointer_move(events, filter);
+        return XKB_FILTER_CONSUME;
+    case XKB_KEY_REPEATED:
+        if (filter->action.ptr.flags & ACTION_REPEAT)
+            append_pointer_move(events, filter);
+        return XKB_FILTER_CONSUME;
+    default:
+        if (--filter->refcnt > 0)
+            return XKB_FILTER_CONSUME;
+    }
+
+    filter->func = NULL;
+    return XKB_FILTER_CONSUME;
+}
+
+/* Implemented with xkb_machine API because it requires struct xkb_machine */
+static void
+xkb_filter_pointer_button_new(struct xkb_server_state *state,
+                              struct xkb_events *events,
+                              struct xkb_filter *filter);
+
+/* Implemented with xkb_machine API because it requires struct xkb_machine */
+static bool
+xkb_filter_pointer_button_func(struct xkb_server_state *state,
+                               struct xkb_events *events,
+                               struct xkb_filter *filter,
+                               const struct xkb_key *key,
+                               enum xkb_key_direction direction);
+
+/* Implemented with xkb_machine API because it requires struct xkb_machine */
+static void
+xkb_filter_pointer_lock_button_new(struct xkb_server_state *state,
+                                   struct xkb_events *events,
+                                   struct xkb_filter *filter);
+
+/* Implemented with xkb_machine API because it requires struct xkb_machine */
+static bool
+xkb_filter_pointer_lock_button_func(struct xkb_server_state *state,
+                                    struct xkb_events *events,
+                                    struct xkb_filter *filter,
+                                    const struct xkb_key *key,
+                                    enum xkb_key_direction direction);
+
+/* Implemented with xkb_machine API because it requires struct xkb_machine */
+static void
+xkb_filter_pointer_set_default_button_new(struct xkb_server_state *state,
+                                          struct xkb_events *events,
+                                          struct xkb_filter *filter);
+
+/* Implemented with xkb_machine API because it requires struct xkb_machine */
+static bool
+xkb_filter_pointer_set_default_button_func(struct xkb_server_state *state,
+                                           struct xkb_events *events,
+                                           struct xkb_filter *filter,
+                                           const struct xkb_key *key,
+                                           enum xkb_key_direction direction);
+
+static void
+xkb_filter_terminate_server_new(struct xkb_server_state *state,
+                                 struct xkb_events *events,
+                                 struct xkb_filter *filter);
+
+static bool
+xkb_filter_terminate_server_func(struct xkb_server_state *state,
+                                  struct xkb_events *events,
+                                  struct xkb_filter *filter,
+                                  const struct xkb_key *key,
+                                  enum xkb_key_direction direction);
+
+/* Implemented with xkb_machine API because it requires struct xkb_machine */
+static void
+xkb_filter_switch_virtual_console_new(struct xkb_server_state *state,
+                                      struct xkb_events *events,
+                                      struct xkb_filter *filter);
+
+/* Implemented with xkb_machine API because it requires struct xkb_machine */
+static bool
+xkb_filter_switch_virtual_console_func(struct xkb_server_state *state,
+                                       struct xkb_events *events,
+                                       struct xkb_filter *filter,
+                                       const struct xkb_key *key,
+                                       enum xkb_key_direction direction);
 
 static inline void
 clear_all_latches_and_locks(struct xkb_server_state *state,
@@ -1049,22 +1200,22 @@ xkb_filter_ctrls_func(struct xkb_server_state *state,
 }
 
 static bool
-append_redirect_key_events(struct xkb_state *state,
+append_redirect_key_events(struct xkb_server_state *state,
                            struct xkb_events *events,
                            const struct xkb_redirect_key_action *redirect,
                            enum xkb_key_direction direction)
 {
     enum xkb_state_component changed = 0;
-    const xkb_mod_mask_t mask = redirect->affect;
+    const xkb_mod_mask_t mask = redirect->affect_mods;
 
     /*
      * Reference state: find the last state update in the queue, otherwise
      * use the current state.
      */
     struct xkb_event *event;
-    struct state_components last_components = state->components;
+    struct state_components last_components = state->base.components;
     darray_foreach_reverse(event, events->queue) {
-        if (event->type == XKB_EVENT_TYPE_COMPONENTS_CHANGE) {
+        if (event->type == XKB_EVENT_TYPE_STATE_COMPONENTS) {
             last_components = event->components.components;
             break;
         }
@@ -1080,28 +1231,39 @@ append_redirect_key_events(struct xkb_state *state,
         changed = get_state_component_changes(&last_components, &new);
         if (changed) {
             darray_append(events->queue, (struct xkb_event) {
-                .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+                .ctx = events->ctx, /* borrowed from events */
+                .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
                 .components = {
                     .components = new,
                     .changed = changed
                 }
             });
+            /*
+             * Commit the temporary modifiers change before the key event
+             * it was computed for: consumers must observe the key event
+             * under the *redirected* modifiers.
+             */
+            darray_append(events->queue, (struct xkb_event) {
+                .ctx = events->ctx, /* borrowed from events */
+                .type = XKB_EVENT_TYPE_FRAME,
+            });
         }
     }
 
     darray_append(events->queue, (struct xkb_event) {
-        .type = (direction == XKB_KEY_UP)
-              ? XKB_EVENT_TYPE_KEY_UP
-              : (direction == XKB_KEY_REPEATED)
-                ? XKB_EVENT_TYPE_KEY_REPEATED
-                : XKB_EVENT_TYPE_KEY_DOWN,
-        .keycode = redirect->keycode
+        .ctx = events->ctx, /* borrowed from events */
+        .type = XKB_EVENT_TYPE_KEY,
+        .key = {
+            .keycode = redirect->keycode,
+            .direction = direction
+        }
     });
 
     if (mask && changed) {
         /* Restore state */
         darray_append(events->queue, (struct xkb_event) {
-            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .ctx = events->ctx, /* borrowed from events */
+            .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
             .components = {
                 .components = last_components,
                 .changed = changed
@@ -1109,6 +1271,7 @@ append_redirect_key_events(struct xkb_state *state,
         });
     }
 
+    state->update_flags &= ~STATE_REQUIRE_KEY_EVENT;
     return true;
 }
 
@@ -1122,7 +1285,7 @@ xkb_filter_redirect_key_new(struct xkb_server_state *state,
         filter->func = NULL;
         return;
     }
-    append_redirect_key_events(&state->base, events, &filter->action.redirect,
+    append_redirect_key_events(state, events, &filter->action.redirect,
                                XKB_KEY_DOWN);
 }
 
@@ -1137,7 +1300,7 @@ xkb_filter_redirect_key_func(struct xkb_server_state *state,
         return XKB_FILTER_CONTINUE;
 
     if (direction == XKB_KEY_UP) {
-        append_redirect_key_events(&state->base, events,
+        append_redirect_key_events(state, events,
                                    &filter->action.redirect, XKB_KEY_UP);
         filter->func = NULL;
         return XKB_FILTER_CONSUME;
@@ -1150,7 +1313,7 @@ xkb_filter_redirect_key_func(struct xkb_server_state *state,
             if (actions[a].type == ACTION_TYPE_REDIRECT_KEY &&
                 actions[a].redirect.keycode != filter->action.redirect.keycode) {
                     /* One action redirects to a different key: release first */
-                    append_redirect_key_events(&state->base, events,
+                    append_redirect_key_events(state, events,
                                                &filter->action.redirect,
                                                XKB_KEY_UP);
                 filter->func = NULL;
@@ -1159,7 +1322,7 @@ xkb_filter_redirect_key_func(struct xkb_server_state *state,
         }
     }
 
-    append_redirect_key_events(&state->base, events, &filter->action.redirect,
+    append_redirect_key_events(state, events, &filter->action.redirect,
                                direction);
     return XKB_FILTER_CONSUME;
 }
@@ -1185,6 +1348,18 @@ static const struct {
                                   xkb_filter_group_latch_func },
     [ACTION_TYPE_GROUP_LOCK]  = { xkb_filter_group_lock_new,
                                   xkb_filter_group_lock_func },
+    [ACTION_TYPE_PTR_MOVE]    = { xkb_filter_pointer_move_new,
+                                  xkb_filter_pointer_move_func },
+    [ACTION_TYPE_PTR_BUTTON]  = { xkb_filter_pointer_button_new,
+                                  xkb_filter_pointer_button_func },
+    [ACTION_TYPE_PTR_LOCK]    = { xkb_filter_pointer_lock_button_new,
+                                  xkb_filter_pointer_lock_button_func },
+    [ACTION_TYPE_PTR_DEFAULT] = { xkb_filter_pointer_set_default_button_new,
+                                  xkb_filter_pointer_set_default_button_func },
+    [ACTION_TYPE_TERMINATE]   = { xkb_filter_terminate_server_new,
+                                  xkb_filter_terminate_server_func },
+    [ACTION_TYPE_SWITCH_VT]   = { xkb_filter_switch_virtual_console_new,
+                                  xkb_filter_switch_virtual_console_func },
     [ACTION_TYPE_CTRL_SET]    = { xkb_filter_ctrls_new,
                                   xkb_filter_ctrls_func },
     [ACTION_TYPE_CTRL_LOCK]   = { xkb_filter_ctrls_new,
@@ -1249,29 +1424,47 @@ xkb_filter_apply_all(struct xkb_server_state *state,
         filter = xkb_filter_new(state);
         filter->key = key;
         filter->action = actions[k];
-        if (state->base.components.controls & CONTROL_STICKY_KEYS) {
-            if (filter->action.type == ACTION_TYPE_MOD_SET) {
+
+        switch (filter->action.type) {
+        case ACTION_TYPE_MOD_SET:
+            if (state->base.components.controls & CONTROL_STICKY_KEYS) {
                 /* Convert modifier set action to a latch */
                 filter->action.type = ACTION_TYPE_MOD_LATCH;
-                if (state->flags & XKB_A11Y_LATCH_TO_LOCK) {
+                if (state->flags & XKB_A11Y_STICKY_KEYS_LATCH_TO_LOCK) {
                     filter->action.mods.flags |= ACTION_LATCH_TO_LOCK;
                 }
-            } else if (filter->action.type == ACTION_TYPE_GROUP_SET) {
+            }
+            break;
+        case ACTION_TYPE_GROUP_SET:
+            if (state->base.components.controls & CONTROL_STICKY_KEYS) {
                 /* Convert group set action to a latch */
                 filter->action.type = ACTION_TYPE_GROUP_LATCH;
-                if (state->flags & XKB_A11Y_LATCH_TO_LOCK) {
+                if (state->flags & XKB_A11Y_STICKY_KEYS_LATCH_TO_LOCK) {
                     filter->action.group.flags |= ACTION_LATCH_TO_LOCK;
                 }
             }
-        }
-        if (filter->action.type == ACTION_TYPE_REDIRECT_KEY) {
+            break;
+        case ACTION_TYPE_PTR_MOVE:
+        case ACTION_TYPE_PTR_BUTTON:
+        case ACTION_TYPE_PTR_LOCK:
+        case ACTION_TYPE_PTR_DEFAULT:
+            if (!(state->base.components.controls & CONTROL_MOUSE_KEYS)) {
+                /* Convert pointer actions to NoAction */
+                assert(!filter_action_funcs[ACTION_TYPE_NONE].new);
+                filter->func = NULL;
+                continue;
+            }
+            break;
+        case ACTION_TYPE_REDIRECT_KEY:
             // FIXME: this is not efficient to resolve mods here each time
-            filter->action.redirect.affect = mod_mask_get_effective(
-                state->base.keymap, filter->action.redirect.affect
+            filter->action.redirect.affect_mods = mod_mask_get_effective(
+                state->base.keymap, filter->action.redirect.affect_mods
             );
             filter->action.redirect.mods = mod_mask_get_effective(
                 state->base.keymap, filter->action.redirect.mods
             );
+            break;
+        default: ;
         }
         filter->func = filter_action_funcs[filter->action.type].func;
         filter_action_funcs[filter->action.type].new(state, events, filter);
@@ -1324,8 +1517,11 @@ struct xkb_state *
 xkb_state_new(struct xkb_keymap *keymap)
 {
     struct xkb_server_state * const state = calloc(1, sizeof(*state));
-    if (!state)
+    if (!state) {
+        log_err_func1(keymap->ctx, XKB_ERROR_ALLOCATION_FAILURE_,
+                      "Could not allocate a state object.\n");
         return NULL;
+    }
 
     xkb_server_state_init(state, keymap, LEGACY_MIXED_STATE, 0, 0);
 
@@ -1333,14 +1529,16 @@ xkb_state_new(struct xkb_keymap *keymap)
 }
 
 struct xkb_state *
-xkb_state_new_with_mode(struct xkb_keymap *keymap, enum xkb_state_mode mode)
+xkb_state_new_with_mode(struct xkb_keymap * restrict keymap,
+                        enum xkb_state_mode mode,
+                        enum xkb_status * restrict status)
 {
     switch (mode) {
     case XKB_STATE_MODE_CLIENT:
     case XKB_STATE_MODE_SERVER_QUERY: {
         struct xkb_client_state * const state = calloc(1, sizeof(*state));
         if (!state)
-            return NULL;
+            break;
 
         static_assert((unsigned)XKB_STATE_MODE_CLIENT ==
                       (unsigned)CLIENT_STATE, "");
@@ -1348,24 +1546,36 @@ xkb_state_new_with_mode(struct xkb_keymap *keymap, enum xkb_state_mode mode)
                       (unsigned)SERVER_COMPANION, "");
         xkb_client_state_init(state, keymap, (enum xkb_state_mode_internal)mode);
 
+        if (status)
+            *status = XKB_SUCCESS;
+
         return (struct xkb_state *)state;
     }
     case XKB_STATE_MODE_SERVER: {
         struct xkb_server_state * const state = calloc(1, sizeof(*state));
         if (!state)
-            return NULL;
+            break;
 
         xkb_server_state_init(state, keymap, LEGACY_SERVER_STATE, 0, 0);
+
+        if (status)
+            *status = XKB_SUCCESS;
 
         return (struct xkb_state *)state;
     }
     default:
-        /*
-         * No error message: caller should check mode availability with the
-         * `xkb_feature_supported()`.
-         */
+        log_err_func(keymap->ctx, XKB_ERROR_UNSUPPORTED_STATE_MODE_,
+                     "Unsupported state mode: %u\n", mode);
+        if (status)
+            *status = XKB_ERROR_UNSUPPORTED_STATE_MODE;
         return NULL;
     }
+
+    log_err_func1(keymap->ctx, XKB_ERROR_ALLOCATION_FAILURE_,
+                  "Could not allocate a state object.\n");
+    if (status)
+        *status = XKB_ERROR_ALLOCATION_FAILURE;
+    return NULL;
 }
 
 struct xkb_state *
@@ -1374,6 +1584,27 @@ xkb_state_ref(struct xkb_state *state)
     assert(state->refcnt > 0);
     state->refcnt++;
     return state;
+}
+
+void
+xkb_state_reset(struct xkb_state *state)
+{
+    memset(&state->components, 0, sizeof(state->components));
+
+    if (state->mode < LEGACY_MIXED_STATE) {
+        static_assert(sizeof(*state) == sizeof(struct xkb_client_state),
+                      "Not a mere wrapper");
+        /* Nothing else to reset */
+    } else {
+        struct xkb_server_state *state_ = (struct xkb_server_state *)state;
+        const struct xkb_server_state prev = *state_;
+        memset(state_, 0, sizeof(*state_));
+
+        state_->base = prev.base;
+        state_->flags = prev.flags;
+        state_->filters = prev.filters;
+        darray_size(state_->filters) = 0;
+    }
 }
 
 static inline void
@@ -1522,6 +1753,36 @@ xkb_state_update_derived(struct xkb_state *state)
     xkb_state_led_update_all(state);
 }
 
+static void
+state_update_enabled_controls(struct xkb_server_state *state,
+                              enum xkb_keyboard_control_flags affect_controls,
+                              enum xkb_keyboard_control_flags controls,
+                              struct xkb_events *events)
+{
+    const bool had_sticky_keys = state->base.components.controls
+                               & CONTROL_STICKY_KEYS;
+
+    /*
+     * Enable using the public API with the all the Control values, except
+     * the internal ones, if any.
+     */
+    affect_controls =
+        ( affect_controls
+        & (enum xkb_keyboard_control_flags)CONTROL_ALL_BOOLEAN );
+    state->base.components.controls &=
+        (enum xkb_action_controls)~affect_controls;
+    state->base.components.controls |=
+        (enum xkb_action_controls)(controls & affect_controls);
+
+    if (had_sticky_keys &&
+        !(state->base.components.controls & CONTROL_STICKY_KEYS)) {
+        /* Sticky keys were disabled: clear all locks and latches */
+        clear_all_latches_and_locks(state, events);
+    }
+
+    xkb_state_update_derived(&state->base);
+}
+
 /**
  * Given a particular key event, updates the state structure to reflect the
  * new modifiers.
@@ -1545,6 +1806,16 @@ xkb_state_update_key(struct xkb_state *base_state, xkb_keycode_t kc,
     /* Ignore unknown key and repeat state for non-repeating key */
     if (!key || (direction == XKB_KEY_REPEATED && !key->repeats))
         return 0;
+
+    if (direction == XKB_KEY_DOWN &&
+        (state->base.components.controls & XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS) &&
+        (state->flags & XKB_A11Y_STICKY_KEYS_NO_SIMULTANEOUS_KEYS) &&
+        state->base.components.base_mods) {
+        /* Deactivate sticky keys if a modifier was already held down*/
+        state_update_enabled_controls(state,
+                                      XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS,
+                                      0, NULL);
+    }
 
     const struct state_components prev_components = state->base.components;
 
@@ -1722,7 +1993,8 @@ state_update_latched_locked(
     /* Update locks */
     const xkb_mod_mask_t affect_locked_mods =
         resolve_to_canonical_mods(state->base.keymap, update->affect_locked_mods);
-    if (affect_locked_mods) {
+    if ((update->components & XKB_STATE_MODS_LOCKED) &&
+        affect_locked_mods) {
         const xkb_mod_mask_t locked_mods =
             resolve_to_canonical_mods(state->base.keymap, update->locked_mods);
         state->base.components.locked_mods &= ~affect_locked_mods;
@@ -1735,7 +2007,8 @@ state_update_latched_locked(
     /* Update latches */
     const xkb_mod_mask_t affect_latched_mods =
         resolve_to_canonical_mods(state->base.keymap, update->affect_latched_mods);
-    if (affect_latched_mods) {
+    if ((update->components & XKB_STATE_MODS_LATCHED) &&
+        affect_latched_mods) {
         const xkb_mod_mask_t latched_mods =
             resolve_to_canonical_mods(state->base.keymap, update->latched_mods);
         update_latch_modifiers(state, events, affect_latched_mods, latched_mods);
@@ -1809,46 +2082,19 @@ clear_all_latches_and_locks(struct xkb_server_state *state,
     state_update_latched_locked(state, &update, events);
 }
 
-static void
-state_update_enabled_controls(struct xkb_server_state *state,
-                              enum xkb_keyboard_control_flags affect,
-                              enum xkb_keyboard_control_flags controls,
-                              struct xkb_events *events)
-{
-    const bool had_sticky_keys = state->base.components.controls
-                               & CONTROL_STICKY_KEYS;
-
-    /*
-     * Enable to use the public API with the all the Control values, except
-     * the internal ones, if any.
-     */
-    affect = affect & (enum xkb_keyboard_control_flags)CONTROL_ALL_BOOLEAN;
-    state->base.components.controls &= (enum xkb_action_controls)~affect;
-    state->base.components.controls |=
-        (enum xkb_action_controls)(controls & affect);
-
-    if (had_sticky_keys &&
-        !(state->base.components.controls & CONTROL_STICKY_KEYS)) {
-        /* Sticky keys were disabled: clear all locks and latches */
-        clear_all_latches_and_locks(state, events);
-    }
-
-    xkb_state_update_derived(&state->base);
-}
-
-static enum xkb_error_code
+static enum xkb_status
 state_update_layout_policy(struct xkb_server_state *state,
                            const struct xkb_layout_policy_update *update)
 {
     if (xkb_feature_supported(XKB_FEATURE_ENUM_LAYOUT_OUT_OF_RANGE_POLICY,
-                              (uint32_t)update->policy)) {
+                              update->policy)) {
         if (update->policy == XKB_LAYOUT_OUT_OF_RANGE_REDIRECT) {
             if (update->redirect < state->base.keymap->num_groups) {
                 state->base.out_of_range_group.redirect_group =
                     update->redirect;
             } else {
                 log_err(state->base.keymap->ctx,
-                        XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX,
+                        XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX_,
                         "Layout policy: "
                         "unsupported layout index %"PRIu32" > %"PRIu32"\n",
                         update->redirect + 1, state->base.keymap->num_groups);
@@ -1859,65 +2105,39 @@ state_update_layout_policy(struct xkb_server_state *state,
         return XKB_SUCCESS;
     } else {
         log_err(state->base.keymap->ctx,
-                XKB_ERROR_UNSUPPORTED_LAYOUT_OUT_OF_RANGE_POLICY,
+                XKB_ERROR_UNSUPPORTED_LAYOUT_OUT_OF_RANGE_POLICY_,
                 "Unsupported layout policy: %d\n", update->policy);
         return XKB_ERROR_UNSUPPORTED_LAYOUT_OUT_OF_RANGE_POLICY;
     }
 }
 
-static void
-log_abi_error(struct xkb_context * restrict ctx,
-              const char * restrict func, enum xkb_error_code error)
-{
-    switch (error) {
-    case XKB_ERROR_ABI_INVALID_STRUCT_SIZE:
-        log_err(ctx, XKB_ERROR_ABI_INVALID_STRUCT_SIZE,
-                "%s: ABI error: unsupported versioned struct\n", func);
-        break;
-    case XKB_ERROR_ABI_BACKWARD_COMPAT:
-        log_err(ctx, XKB_ERROR_ABI_BACKWARD_COMPAT,
-                "%s: ABI version mismatch: missing newer required fields\n",
-                func);
-        break;
-    case XKB_ERROR_ABI_FORWARD_COMPAT:
-        log_err(ctx, XKB_ERROR_ABI_FORWARD_COMPAT,
-                "%s: ABI version mismatch: cannot use newer fields\n", func);
-        break;
-    default:
-        /* unreachable */
-        assert(false);
-    }
-}
-
-#define xkb_check_state_update_size(x) xkb_check_versioned_struct_size( \
-    xkb_versioned_struct_size_v1(x),                                    \
-    xkb_versioned_struct_size_min(x),                                   \
-    (x)                                                                 \
-)
-
-/* Check ABI compatibility */
-static enum xkb_error_code
+/** Check ABI compatibility */
+// NOLINTBEGIN(bugprone-assignment-in-selection-statement)
+static enum xkb_status
 check_state_update_abi_(struct xkb_context * restrict ctx,
                         const char * restrict func,
-                        const struct xkb_state_update * restrict update)
+                        const struct xkb_synthetic_update * restrict update)
 {
-    enum xkb_error_code error = XKB_SUCCESS;
-    if ((error = xkb_check_state_update_size(update)) ||
+    enum xkb_status status = XKB_SUCCESS;
+    if ((status = xkb_check_state_abi(update)) ||
+        (update->reserved0 != 0 &&
+         (status = XKB_ERROR_ABI_FORWARD_COMPAT)) ||
         (update->components &&
-         (error = xkb_check_state_update_size(update->components))) ||
+         (status = xkb_check_state_abi(update->components))) ||
         (update->layout_policy &&
-         (error = xkb_check_state_update_size(update->layout_policy)))) {
-        log_abi_error(ctx, func, error);
+         (status = xkb_check_state_abi(update->layout_policy)))) {
+        xkb_log_abi_error(ctx, func, status);
     }
-    return error;
+    return status;
 }
+// NOLINTEND(bugprone-assignment-in-selection-statement)
 
 #define check_state_update_abi(ctx, update) \
     check_state_update_abi_(ctx, __func__, update)
 
-enum xkb_error_code
+enum xkb_status
 xkb_state_update_synthetic(struct xkb_state * base_state,
-                           const struct xkb_state_update * update,
+                           const struct xkb_synthetic_update * update,
                            enum xkb_state_component *changed)
 {
     /* Guard against client-only state */
@@ -1931,10 +2151,10 @@ xkb_state_update_synthetic(struct xkb_state * base_state,
         (struct xkb_server_state *)base_state;
 
     /* Check ABI compatibility */
-    enum xkb_error_code error = check_state_update_abi(state->base.keymap->ctx,
-                                                       update);
-    if (error)
-        return error;
+    enum xkb_status status = check_state_update_abi(state->base.keymap->ctx,
+                                                    update);
+    if (status != XKB_SUCCESS)
+        return status;
 
     const struct state_components previous_components = state->base.components;
 
@@ -1943,18 +2163,20 @@ xkb_state_update_synthetic(struct xkb_state * base_state,
 
     /* Update parametrized controls first */
     if (update->layout_policy) {
-        error = state_update_layout_policy(state, update->layout_policy);
-        if (error)
-            return error;
+        status = state_update_layout_policy(state, update->layout_policy);
+        if (status != XKB_SUCCESS)
+            return status;
     }
 
     if (update->components) {
         const struct xkb_state_components_update * const components =
             update->components;
         /* Update boolean controls first */
-        state_update_enabled_controls(state,
-                                      components->affect_controls,
-                                      components->controls, NULL);
+        if (components->components & XKB_STATE_CONTROLS_EFFECTIVE) {
+            state_update_enabled_controls(state,
+                                          components->affect_controls,
+                                          components->controls, NULL);
+        }
 
         state_update_latched_locked(state, components, NULL);
     }
@@ -2007,7 +2229,7 @@ xkb_state_update_mask(struct xkb_state *base_state,
      * in xkb_state_update_derived(), rather than for each component
      * separately.  That would allow to distinguish between "really"
      * depressed mods (would be in MODS_DEPRESSED) and indirectly
-     * depressed to to a mapping (would only be in MODS_EFFECTIVE).
+     * depressed to a mapping (would only be in MODS_EFFECTIVE).
      * However, the traditional behavior of xkb_state_update_key() is that
      * if a vmod is depressed, its mappings are depressed with it; so we're
      * expected to do the same here.  Also, LEDs (usually) look if a real
@@ -2338,13 +2560,22 @@ xkb_state_serialize_layout(struct xkb_state *state,
     return serialize_layout(&state->components, type);
 }
 
+xkb_led_mask_t
+xkb_state_serialize_leds(const struct xkb_state *state,
+                         enum xkb_state_component type)
+{
+    return (type & XKB_STATE_LEDS)
+        ? state->components.leds
+        : 0;
+}
+
 static inline enum xkb_keyboard_control_flags
 serialize_controls(const struct state_components *components,
                    enum xkb_state_component type)
 {
-    return (type & XKB_STATE_CONTROLS)
+    return (type & XKB_STATE_CONTROLS_EFFECTIVE)
         /*
-         * Enable to use the public API with the all the Controls values, except
+         * Enable using the public API with the all the Controls values, except
          * the internal ones, if any.
          */
         ? (enum xkb_keyboard_control_flags)
@@ -2353,8 +2584,8 @@ serialize_controls(const struct state_components *components,
 }
 
 enum xkb_keyboard_control_flags
-xkb_state_serialize_enabled_controls(const struct xkb_state *state,
-                                     enum xkb_state_component type)
+xkb_state_serialize_controls(const struct xkb_state *state,
+                             enum xkb_state_component type)
 {
     return serialize_controls(&state->components, type);
 }
@@ -2742,6 +2973,13 @@ struct xkb_overlaid_key {
     int refcnt;
 };
 
+struct xkb_shortcuts_config_entry {
+    /** Real modifier mask to trigger shortcuts tweaks */
+    xkb_mod_mask_t mods;
+    /** Target layout */
+    xkb_layout_index_t target;
+};
+
 /*
  * `xkb_machine` have a similar role as the `xkb_state` state machine and is
  * indeed currently only a simple wrapper. However, having a separate type:
@@ -2761,15 +2999,6 @@ struct xkb_machine {
 
     /** Keyboard overlays handling */
     struct {
-        /** Current enabled overlays mask */
-        xkb_overlay_mask_t enabled;
-        /**
-         * Activation order of the overlay
-         *
-         * Overlays indices are stored 1-indexed in nibbles: the lowest
-         * nibble corresponds to the latest activated index.
-         */
-        uint32_t order;
         /**
          * Current overlaid keys
          *
@@ -2778,6 +3007,15 @@ struct xkb_machine {
          * corresponding key release.
          */
         darray(struct xkb_overlaid_key) keys;
+        /**
+         * Activation order of the overlay
+         *
+         * Overlays indices are stored 1-indexed in nibbles: the lowest
+         * nibble corresponds to the latest activated index.
+         */
+        uint32_t order;
+        /** Current enabled overlays mask */
+        xkb_overlay_mask_t enabled;
     } overlays;
 
     /** Configuration */
@@ -2796,12 +3034,20 @@ struct xkb_machine {
 
         /** Shortcuts tweak */
         struct machine_shortcuts_config {
-            /** Real modifier mask to trigger shortcuts tweaks */
-            xkb_mod_mask_t mask;
-            /** Layouts targets */
-            xkb_layout_index_t *targets;
+            /** Substitution entries */
+            struct xkb_shortcuts_config_entry *entries;
         } shortcuts;
     } config;
+
+    /** Mouse keys handling */
+    struct {
+        /** Default pointer button */
+        xkb_pointer_button_index_t default_button;
+        /** Mask of the locked buttons */
+        xkb_pointer_button_mask_t locked_buttons;
+    } mouse;
+
+    enum xkb_machine_flags flags;
 };
 
 typedef darray(struct machine_mods_mapping) machine_mods_mappings;
@@ -2813,7 +3059,7 @@ struct xkb_machine_builder {
     struct {
         /** Accessibility flags */
         struct {
-            enum xkb_a11y_flags affect;
+            enum xkb_a11y_flags affect_flags;
             enum xkb_a11y_flags flags;
         } a11y;
     } controls;
@@ -2823,59 +3069,111 @@ struct xkb_machine_builder {
 
     /** Shortcuts tweak */
     struct xkb_shortcuts_config_options {
-        /** Modifier mask to trigger tweak */
-        xkb_mod_mask_t mask;
-        /** Target layouts targets */
-        darray(xkb_layout_index_t) targets;
+        /** Substitution entries */
+        darray(struct xkb_shortcuts_config_entry) entries;
     } shortcuts;
 
-    enum xkb_machine_builder_flags flags;
+    enum xkb_machine_flags machine_flags;
+    enum xkb_machine_builder_flags builder_flags;
+    int refcnt;
 };
 
 struct xkb_machine_builder *
-xkb_machine_builder_new(struct xkb_keymap *keymap,
-                        enum xkb_machine_builder_flags flags)
+xkb_machine_builder_new(
+    struct xkb_keymap * restrict keymap,
+    const struct xkb_machine_builder_config * restrict config,
+    enum xkb_status * restrict status
+)
 {
-    const enum xkb_machine_builder_flags invalid_flags
-        = flags
-        & ~(enum xkb_machine_builder_flags)XKB_MACHINE_BUILDER_FLAGS_VALUES;
-    if (invalid_flags) {
-        log_err(keymap->ctx, XKB_LOG_MESSAGE_NO_ID,
-                "%s: unrecognized keymap compilation flags: 0x%x\n",
-                __func__, invalid_flags);
+    /* Handle default configuration */
+    static const struct xkb_machine_builder_config default_config = {
+        .size = sizeof(default_config)
+    };
+    if (!config)
+        config = &default_config;
+
+    /* Check ABI compatibility */
+    const enum xkb_status status_ = xkb_check_state_abi(config);
+    if (status_) {
+        xkb_log_abi_error(keymap->ctx, __func__, status_);
+        if (status)
+            *status = status_;
         return NULL;
     }
 
-    struct xkb_machine_builder * const opt = calloc(1, sizeof(*opt));
-    if (!opt)
+    /* Sanitize input */
+    const enum xkb_machine_builder_flags invalid_builder_flags
+        = config->builder_flags
+        & ~(enum xkb_machine_builder_flags)XKB_MACHINE_BUILDER_FLAGS_VALUES;
+    if (invalid_builder_flags) {
+        log_err_func(keymap->ctx, XKB_ERROR_UNSUPPORTED_MACHINE_BUILDER_FLAGS_,
+                     "unrecognized machine builder flags: 0x%x\n",
+                     invalid_builder_flags);
+        if (status)
+            *status = XKB_ERROR_UNSUPPORTED_MACHINE_BUILDER_FLAGS;
         return NULL;
+    }
 
-    *opt = (struct xkb_machine_builder) {
+    const enum xkb_machine_flags invalid_machine_flags
+        = (enum xkb_machine_flags)config->machine_flags
+        & ~(enum xkb_machine_flags)XKB_MACHINE_FLAGS_VALUES;
+    if (invalid_machine_flags) {
+        log_err_func(keymap->ctx, XKB_ERROR_UNSUPPORTED_MACHINE_FLAGS_,
+                     "unrecognized state machine flags: 0x%x\n",
+                     invalid_machine_flags);
+        if (status)
+            *status = XKB_ERROR_UNSUPPORTED_MACHINE_FLAGS;
+        return NULL;
+    }
+
+    struct xkb_machine_builder * const builder = calloc(1, sizeof(*builder));
+    if (!builder) {
+        log_err_func1(keymap->ctx, XKB_ERROR_ALLOCATION_FAILURE_,
+                      "cannot allocate machine builder\n");
+        if (status)
+            *status = XKB_ERROR_ALLOCATION_FAILURE;
+        return NULL;
+    }
+
+    *builder = (struct xkb_machine_builder) {
         .keymap = xkb_keymap_ref(keymap),
-        .flags = flags,
+        .refcnt = 1,
+        .builder_flags = (enum xkb_machine_builder_flags)config->builder_flags,
+        .machine_flags = (enum xkb_machine_flags)config->machine_flags,
         .controls = {
             .a11y = {
-                .affect = XKB_A11Y_NO_FLAGS,
+                .affect_flags = XKB_A11Y_NO_FLAGS,
                 .flags = XKB_A11Y_NO_FLAGS,
             },
         },
         .mods = darray_new(),
         .shortcuts = {
-            .mask = 0,
-            .targets = darray_new(),
+            .entries = darray_new(),
         },
     };
 
-    return opt;
+    if (status)
+        *status = XKB_SUCCESS;
+
+    return builder;
+}
+
+struct xkb_machine_builder *
+xkb_machine_builder_ref(struct xkb_machine_builder *builder)
+{
+    assert(builder->refcnt > 0);
+    builder->refcnt++;
+    return builder;
 }
 
 void
-xkb_machine_builder_destroy(struct xkb_machine_builder *builder)
+xkb_machine_builder_unref(struct xkb_machine_builder *builder)
 {
-    if (builder == NULL)
+    assert(!builder || builder->refcnt > 0);
+    if (!builder || --builder->refcnt > 0)
         return;
 
-    darray_free(builder->shortcuts.targets);
+    darray_free(builder->shortcuts.entries);
     darray_free(builder->mods);
     xkb_keymap_unref(builder->keymap);
     free(builder);
@@ -2888,44 +3186,49 @@ xkb_machine_builder_get_keymap(const struct xkb_machine_builder *builder)
     return builder->keymap;
 }
 
-enum xkb_error_code
-xkb_machine_builder_update_a11y_flags(
-    struct xkb_machine_builder *builder,
-    enum xkb_a11y_flags affect,
-    enum xkb_a11y_flags flags)
+enum xkb_status
+xkb_machine_builder_update_a11y(
+    struct xkb_machine_builder * restrict builder,
+    const struct xkb_machine_builder_a11y_update * restrict update)
 {
+    /* Check ABI compatibility */
+    enum xkb_status status = xkb_check_state_abi(update);
+    if (status != XKB_SUCCESS) {
+        xkb_log_abi_error(builder->keymap->ctx, __func__, status);
+        return status;
+    }
+
     const enum xkb_a11y_flags invalid_flags =
         ~(enum xkb_a11y_flags)XKB_A11Y_FLAGS_VALUES;
 
-    if (affect & invalid_flags) {
-        log_err_func(builder->keymap->ctx, XKB_LOG_MESSAGE_NO_ID,
-                     "%s: unrecognized A11Y affected flags: %#x\n",
-                     __func__, affect & invalid_flags);
+    if (update->affect_flags & invalid_flags) {
+        log_err(builder->keymap->ctx, XKB_ERROR_UNSUPPORTED_A11Y_FLAGS_,
+                "%s: unrecognized A11Y affected flags: %#x\n",
+                __func__, update->affect_flags & invalid_flags);
         return XKB_ERROR_UNSUPPORTED_A11Y_FLAGS;
     }
-    if (flags & invalid_flags) {
-        log_err_func(builder->keymap->ctx, XKB_LOG_MESSAGE_NO_ID,
-                     "%s: unrecognized A11Y flags: %#x\n",
-                     __func__, flags & invalid_flags);
+    if (update->flags & invalid_flags) {
+        log_err(builder->keymap->ctx, XKB_ERROR_UNSUPPORTED_A11Y_FLAGS_,
+                "%s: unrecognized A11Y flags: %#x\n",
+                __func__, update->flags & invalid_flags);
         return XKB_ERROR_UNSUPPORTED_A11Y_FLAGS;
     }
 
-    builder->controls.a11y.affect |= affect;
-    builder->controls.a11y.flags &= ~affect;
-    builder->controls.a11y.flags |= (flags & affect);
+    builder->controls.a11y.affect_flags |= update->affect_flags;
+    builder->controls.a11y.flags &= ~update->affect_flags;
+    builder->controls.a11y.flags |= (update->flags & update->affect_flags);
 
     return XKB_SUCCESS;
 }
 
-enum xkb_error_code
-xkb_machine_builder_remap_mods(
-    struct xkb_machine_builder *builder,
-    xkb_mod_mask_t source,
-    xkb_mod_mask_t target
+enum xkb_status
+xkb_machine_builder_update_mods_remap(
+    struct xkb_machine_builder * restrict builder,
+    const struct xkb_machine_builder_mods_remap_update * restrict update
 )
 {
-    if (!source) {
-        if (!target) {
+    if (!update->source) {
+        if (!update->target) {
             /* Reset mappings */
             darray_resize(builder->mods, 0);
             return XKB_SUCCESS;
@@ -2936,41 +3239,41 @@ xkb_machine_builder_remap_mods(
 
     /* Check the modifiers against the keymap */
     const xkb_mod_mask_t invalid = ~builder->keymap->canonical_state_mask;
-    if ((source & invalid)) {
+    if ((update->source & invalid)) {
         log_err(builder->keymap->ctx, XKB_ERROR_UNSUPPORTED_MODIFIER_MASK,
                 "%s: Invalid source modifiers: 0x%"PRIx32"\n",
-                __func__, source);
+                __func__, update->source);
         return XKB_ERROR_UNSUPPORTED_MODIFIER_MASK;
     }
-    if ((target & invalid)) {
+    if ((update->target & invalid)) {
         log_err(builder->keymap->ctx, XKB_ERROR_UNSUPPORTED_MODIFIER_MASK,
                 "%s: Invalid target modifiers: 0x%"PRIx32"\n",
-                __func__, target);
+                __func__, update->target);
         return XKB_ERROR_UNSUPPORTED_MODIFIER_MASK;
     }
 
     struct machine_mods_mapping *mapping = NULL;
     darray_size_t m = 0;
     darray_enumerate(m, mapping, builder->mods) {
-        if (mapping->source == source) {
-            if (!target) {
+        if (mapping->source == update->source) {
+            if (!update->target) {
                 /* Remove mapping */
                 darray_remove(builder->mods, m);
             } else {
                 /* Update mapping */
-                mapping->target = target;
+                mapping->target = update->target;
             }
             return XKB_SUCCESS;
         }
     }
 
-    if (target) {
+    if (update->target) {
         /* Append new mapping */
         darray_append(
             builder->mods,
             (struct machine_mods_mapping) {
-                .source = source,
-                .target = target
+                .source = update->source,
+                .target = update->target
             }
         );
     } else {
@@ -2980,68 +3283,96 @@ xkb_machine_builder_remap_mods(
     return XKB_SUCCESS;
 }
 
-enum xkb_error_code
-xkb_machine_builder_update_shortcut_mods(struct xkb_machine_builder *builder,
-                                         xkb_mod_mask_t affect,
-                                         xkb_mod_mask_t mask)
+enum xkb_status
+xkb_machine_builder_update_shortcut_override(
+    struct xkb_machine_builder * restrict builder,
+    const struct xkb_machine_builder_shortcut_override_update * restrict update
+)
 {
+    struct xkb_keymap *keymap = builder->keymap;
+
     /* Check the modifiers against the keymap */
-    const xkb_mod_mask_t invalid = ~builder->keymap->canonical_state_mask;
-    if ((affect & invalid)) {
-        log_err(builder->keymap->ctx, XKB_ERROR_UNSUPPORTED_MODIFIER_MASK,
+    const xkb_mod_mask_t invalid = ~keymap->canonical_state_mask;
+    if ((update->affect_mods & invalid)) {
+        log_err(keymap->ctx, XKB_ERROR_UNSUPPORTED_MODIFIER_MASK,
                 "%s: Invalid affected modifiers: 0x%"PRIx32"\n",
-                __func__, affect);
+                __func__, update->affect_mods);
         return XKB_ERROR_UNSUPPORTED_MODIFIER_MASK;
     }
-    if ((mask & invalid)) {
-        log_err(builder->keymap->ctx, XKB_ERROR_UNSUPPORTED_MODIFIER_MASK,
+    if ((update->mods & invalid)) {
+        log_err(keymap->ctx, XKB_ERROR_UNSUPPORTED_MODIFIER_MASK,
                 "%s: Invalid modifiers: 0x%"PRIx32"\n",
-                __func__, mask);
+                __func__, update->mods);
         return XKB_ERROR_UNSUPPORTED_MODIFIER_MASK;
     }
 
-    builder->shortcuts.mask &= ~affect;
-    builder->shortcuts.mask |= (mask & affect);
-    return XKB_SUCCESS;
-}
-
-enum xkb_error_code
-xkb_machine_builder_remap_shortcut_layout(struct xkb_machine_builder *builder,
-                                          xkb_layout_index_t source,
-                                          xkb_layout_index_t target)
-{
-    if (source >= builder->keymap->num_groups) {
-        log_err(builder->keymap->ctx, XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX,
+    /* Check the layout indices against the keymap */
+    if (update->source >= keymap->num_groups &&
+        update->source != XKB_LAYOUT_INVALID) {
+        static_assert(XKB_LAYOUT_INVALID == UINT32_MAX, "integer overflow");
+        log_err(keymap->ctx, XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX_,
                 "%s: Invalid source layout: "
                 "expected index in range 1..%"PRIu32", but got %"PRIu32"\n",
-                __func__, builder->keymap->num_groups, source + 1);
+                __func__, keymap->num_groups, update->source + 1);
         return XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX;
     }
-    if (target >= builder->keymap->num_groups) {
-        log_err(builder->keymap->ctx, XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX,
+    if (update->target >= keymap->num_groups &&
+        update->target != XKB_LAYOUT_INVALID) {
+        static_assert(XKB_LAYOUT_INVALID == UINT32_MAX, "integer overflow");
+        log_err(keymap->ctx, XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX_,
                 "%s: Invalid target layout: "
                 "expected index in range 1..%"PRIu32", but got %"PRIu32"\n",
-                __func__, builder->keymap->num_groups, target + 1);
+                __func__, keymap->num_groups, update->target + 1);
         return XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX;
     }
 
     struct xkb_shortcuts_config_options * const config = &builder->shortcuts;
 
     /* Resize array & initialize new entries, if relevant */
-    if (source >= darray_size(config->targets)) {
-        if (target == source) {
+    if (update->source >= darray_size(config->entries) &&
+        update->source != XKB_LAYOUT_INVALID) {
+        if (update->target == update->source) {
             /* Skip default setting */
             return XKB_SUCCESS;
         }
-        xkb_layout_index_t new = darray_size(config->targets);
-        darray_resize(config->targets, source + 1);
-        for (; new < source; new++)
-            darray_item(config->targets, new) = XKB_LAYOUT_INVALID;
+        xkb_layout_index_t new = darray_size(config->entries);
+        darray_resize(config->entries, update->source + 1);
+        for (; new <= update->source; new++) {
+            darray_item(config->entries, new) =
+                (struct xkb_shortcuts_config_entry) {
+                    .target = XKB_LAYOUT_INVALID,
+                    .mods = 0
+                };
+        }
     }
 
-    darray_item(config->targets, source) = (source == target)
-        ? XKB_LAYOUT_INVALID
-        : target;
+    struct xkb_shortcuts_config_entry *entry;
+    xkb_layout_index_t source = (update->source == XKB_LAYOUT_INVALID)
+        ? 0               /* Loop over all entries */
+        : update->source; /* Single entry */
+    darray_foreach_from(entry, config->entries, source) {
+        if (update->source == XKB_LAYOUT_INVALID &&
+            entry->target == XKB_LAYOUT_INVALID) {
+            /* Skip previous deactivated entry */
+            source++;
+            continue;
+        }
+
+        if (update->affect_mods) {
+            entry->mods &= ~update->affect_mods;
+            entry->mods |= (update->affect_mods & update->mods);
+        }
+
+        if (update->source != XKB_LAYOUT_INVALID) {
+            entry->target = (update->target == source)
+                ? XKB_LAYOUT_INVALID
+                : update->target;
+            /* Single entry: exit loop */
+            break;
+        }
+        source++;
+    }
+
     return XKB_SUCCESS;
 }
 
@@ -3077,7 +3408,7 @@ cmp_mod_masks(const void *a, const void *b)
     return (m1 < m2) ? -1 : +1;
 }
 
-static bool
+static enum xkb_status
 machine_set_mods(struct xkb_machine *sm,
                  const machine_mods_mappings *raw_mappings)
 {
@@ -3117,84 +3448,109 @@ machine_set_mods(struct xkb_machine *sm,
         };
     }
 
-    return true;
+    return XKB_SUCCESS;
 }
 
-static bool
-machine_set_shortcuts(struct xkb_machine * restrict sm,
-                      const struct xkb_shortcuts_config_options * restrict options)
+static enum xkb_status
+machine_set_shortcuts(
+    struct xkb_machine * restrict sm,
+    const struct xkb_shortcuts_config_options * restrict options
+)
 {
-    if (darray_empty(options->targets)) {
+    if (darray_empty(options->entries)) {
         sm->config.shortcuts = (struct machine_shortcuts_config) {
-            .mask = 0,
-            .targets = NULL
+            .entries = NULL
         };
-        return true;
+        return XKB_SUCCESS;
     }
 
     struct xkb_keymap * const keymap = sm->base.base.keymap;
 
-    /* Consider only defined layouts */
-    xkb_layout_index_t count = MIN(
+    struct xkb_shortcuts_config_entry * entries =
+        calloc(keymap->num_groups, sizeof(*entries));
+    if (!entries)
+        return XKB_ERROR_ALLOCATION_FAILURE;
+
+    const xkb_layout_index_t count = MIN(
         keymap->num_groups,
-        (xkb_layout_index_t) darray_size(options->targets)
+        (xkb_layout_index_t) darray_size(options->entries)
     );
-    /* Drop layout entries with default setting or invalid group */
-    static_assert(XKB_LAYOUT_INVALID > XKB_MAX_GROUPS, "");
-    while (count > 1) {
-        if (darray_item(options->targets, count - 1) <
-            keymap->num_groups)
-            break;
-        count--;
-    }
-    if (!count)
-        return true;
 
-    xkb_mod_mask_t mask = options->mask;
-    /* Sanitize mask */
-    mask &= sm->base.base.keymap->canonical_state_mask;
-    if (!mask)
-        return true;
-
-    xkb_layout_index_t * const targets = calloc(keymap->num_groups,
-                                                sizeof(*targets));
-    if (!targets)
-        return false;
-
+    bool some_entries = false;
     for (xkb_layout_index_t l = 0; l < count; l++) {
-        /* Sanitize layouts targets */
-        targets[l] = (darray_item(options->targets, l) <
-                        keymap->num_groups)
-                        ? darray_item(options->targets, l)
-                        : XKB_LAYOUT_INVALID;
+        /* Sanitize layout target */
+        const xkb_layout_index_t target =
+            darray_item(options->entries, l).target;
+        /* Sanitize modifier mask */
+        const xkb_mod_mask_t mods = (
+            darray_item(options->entries, l).mods &
+            sm->base.base.keymap->canonical_state_mask
+        );
+        if (target < keymap->num_groups && target != l && mods) {
+            entries[l] = (struct xkb_shortcuts_config_entry) {
+                .target = target,
+                .mods = mods
+            };
+            some_entries = true;
+        } else {
+            entries[l] = (struct xkb_shortcuts_config_entry) {
+                .target = XKB_LAYOUT_INVALID,
+                .mods = 0
+            };
+            continue;
+        }
     }
-    for (xkb_layout_index_t l = count; l < keymap->num_groups; l++) {
-        targets[l] = XKB_LAYOUT_INVALID;
+
+    if (!some_entries) {
+        free(entries);
+        entries = NULL;
+    } else {
+        /* Initialize groups with no entries */
+        for (xkb_layout_index_t l = count; l < keymap->num_groups; l++) {
+            entries[l] = (struct xkb_shortcuts_config_entry) {
+                .target = XKB_LAYOUT_INVALID,
+                .mods = 0
+            };
+        }
     }
 
     sm->config.shortcuts = (struct machine_shortcuts_config) {
-        .mask = mask,
-        .targets = targets
+        .entries = entries
     };
-    return true;
+    return XKB_SUCCESS;
 }
 
 struct xkb_machine *
-xkb_machine_new(const struct xkb_machine_builder *builder)
+xkb_machine_new(const struct xkb_machine_builder * restrict builder,
+                enum xkb_status * restrict status)
 {
     struct xkb_machine * const machine = calloc(1, sizeof(*machine));
-    if (!machine)
+    if (!machine) {
+        log_err_func1(builder->keymap->ctx, XKB_ERROR_ALLOCATION_FAILURE_,
+                      "cannot allocate machine\n");
+        if (status)
+            *status = XKB_ERROR_ALLOCATION_FAILURE;
         return NULL;
+    }
 
     xkb_server_state_init(&machine->base, builder->keymap, SERVER_STATE,
-                          builder->controls.a11y.affect,
+                          builder->controls.a11y.affect_flags,
                           builder->controls.a11y.flags);
+    machine->flags = builder->machine_flags;
 
-    if (!machine_set_mods(machine, &builder->mods) ||
-        !machine_set_shortcuts(machine, &builder->shortcuts))
+    enum xkb_status status_;
+    if ((status_ = machine_set_mods(machine, &builder->mods)) != XKB_SUCCESS ||
+        (status_ = machine_set_shortcuts(machine, &builder->shortcuts)) !=
+        XKB_SUCCESS) {
+        *status = status_;
         goto error;
+    }
 
     darray_init(machine->overlays.keys);
+    machine->mouse.default_button = XKB_POINTER_BUTTON_MIN;
+
+    if (status)
+        *status = XKB_SUCCESS;
 
     return machine;
 
@@ -3220,7 +3576,7 @@ xkb_machine_unref(struct xkb_machine *sm)
 
     xkb_state_destroy(&sm->base.base);
     darray_free(sm->overlays.keys);
-    free(sm->config.shortcuts.targets);
+    free(sm->config.shortcuts.entries);
     free(sm->config.modifiers.mappings);
     free(sm);
 }
@@ -3239,6 +3595,38 @@ xkb_machine_get_state(struct xkb_machine *sm)
     return (struct xkb_state *)sm;
 }
 
+struct xkb_state *
+xkb_state_new_from_machine(const struct xkb_machine * restrict machine,
+                           enum xkb_status * restrict status)
+{
+    /* Creation */
+    enum xkb_status status_;
+    struct xkb_state * const state = xkb_state_new_with_mode(
+        machine->base.base.keymap,
+        XKB_STATE_MODE_SERVER_QUERY,
+        &status_
+    );
+    if (status_ != XKB_SUCCESS) {
+        if (status)
+            *status = status_;
+        return NULL;
+    }
+
+    assert(state->mode == SERVER_COMPANION);
+    assert(state->refcnt == 1);
+
+    /* Copy machine’s state */
+    *state = machine->base.base;
+
+    /* Restore previous values */
+    state->mode = SERVER_COMPANION;
+    state->refcnt = 1;
+
+    if (status)
+        *status = XKB_SUCCESS;
+    return state;
+}
+
 static void
 machine_update_overlays(struct xkb_machine *sm)
 {
@@ -3248,7 +3636,7 @@ machine_update_overlays(struct xkb_machine *sm)
      */
 
     const xkb_overlay_mask_t mask =
-        OVERLAYS_FROM_CONTROLS(sm->base.base.components.controls);
+        overlays_from_controls(sm->base.base.components.controls);
     xkb_overlay_mask_t added = mask & ~sm->overlays.enabled;
 
     /* Remove overlays no longer enabled and keep relative order */
@@ -3284,16 +3672,16 @@ machine_update_overlays(struct xkb_machine *sm)
     sm->overlays.enabled = mask;
 }
 
-enum xkb_error_code
+enum xkb_status
 xkb_machine_process_synthetic(struct xkb_machine *sm,
-                              const struct xkb_state_update *update,
+                              const struct xkb_synthetic_update *update,
                               struct xkb_events *events)
 {
     /* Check ABI compatibility */
-    enum xkb_error_code error =
+    enum xkb_status status =
         check_state_update_abi(sm->base.base.keymap->ctx, update);
-    if (error)
-        return error;
+    if (status != XKB_SUCCESS)
+        return status;
 
     struct xkb_server_state * const state = &sm->base;
     const struct state_components previous_components = state->base.components;
@@ -3301,20 +3689,25 @@ xkb_machine_process_synthetic(struct xkb_machine *sm,
     // TODO: use a *transaction* mechanism: either the whole update succeeds
     //       or rollback
 
+    darray_size(events->queue) = 0;
+    events->next = 0;
+
     /* Update parametrized controls first */
     if (update->layout_policy) {
-        error = state_update_layout_policy(state, update->layout_policy);
-        if (error)
-            return error;
+        status = state_update_layout_policy(state, update->layout_policy);
+        if (status != XKB_SUCCESS)
+            return status;
     }
 
     if (update->components) {
         const struct xkb_state_components_update * const components =
             update->components;
         /* Update boolean controls first */
-        state_update_enabled_controls(state,
-                                      components->affect_controls,
-                                      components->controls, events);
+        if (components->components & XKB_STATE_CONTROLS_EFFECTIVE) {
+            state_update_enabled_controls(state,
+                                          components->affect_controls,
+                                          components->controls, events);
+        }
 
         state_update_latched_locked(state, components, events);
     }
@@ -3326,16 +3719,23 @@ xkb_machine_process_synthetic(struct xkb_machine *sm,
     );
     if (changed) {
         // TODO: latch controls
-        if (changed & XKB_STATE_CONTROLS)
+        if (changed & XKB_STATE_CONTROLS_EFFECTIVE)
             machine_update_overlays(sm);
 
         /* Create event only if some component actually changed */
         darray_append(events->queue, (struct xkb_event) {
-            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .ctx = events->ctx, /* borrowed from events */
+            .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
             .components = {
                 .changed = changed,
                 .components = state->base.components
             }
+        });
+
+        /* Terminate the frame */
+        darray_append(events->queue, (struct xkb_event) {
+            .ctx = events->ctx, /* borrowed from events */
+            .type = XKB_EVENT_TYPE_FRAME,
         });
     }
 
@@ -3356,7 +3756,7 @@ do_remap_modifiers(const struct machine_modifiers_config * restrict mappings,
         return -1;
 
     const struct xkb_key_type * const type = key->groups[layout].type;
-    xkb_mod_mask_t affect = 0;
+    xkb_mod_mask_t affect_mods = 0;
     xkb_mod_mask_t mods = 0;
     for (darray_size_t m = 0; m < mappings->mappings_num; m++) {
         const struct machine_mods_mapping * const mapping =
@@ -3364,21 +3764,21 @@ do_remap_modifiers(const struct machine_modifiers_config * restrict mappings,
         if (/* Skip not matching active mods */
             (mapping->source & state->components.mods) == mapping->source &&
             /* Skip overlap with previous active mappings */
-            !(mapping->source & affect) &&
+            !(mapping->source & affect_mods) &&
             /* Skip if the key type uses some of the source modifiers */
             !(mapping->source & type->mods.mask)) {
-            affect |= mappings->mappings[m].source;
+            affect_mods |= mappings->mappings[m].source;
             mods |= mappings->mappings[m].target;
         }
     }
 
-    if (!affect)
+    if (!affect_mods)
         return -1;
 
     struct xkb_state new = *state;
-    new.components.base_mods = (new.components.base_mods & ~affect) | mods;
-    new.components.latched_mods = (new.components.latched_mods & ~affect);
-    new.components.locked_mods = (new.components.locked_mods & ~affect);
+    new.components.base_mods = (new.components.base_mods & ~affect_mods) | mods;
+    new.components.latched_mods = (new.components.latched_mods & ~affect_mods);
+    new.components.locked_mods = (new.components.locked_mods & ~affect_mods);
     xkb_state_update_derived(&new);
 
     ssize_t event_idx = -1;
@@ -3387,7 +3787,8 @@ do_remap_modifiers(const struct machine_modifiers_config * restrict mappings,
     if (changed) {
         event_idx = (ssize_t) darray_size(events->queue);
         darray_append(events->queue, (struct xkb_event) {
-            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .ctx = events->ctx, /* borrowed from events */
+            .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
             .components = {
                 .components = new.components,
                 .changed = changed
@@ -3412,10 +3813,16 @@ do_shortcuts_tweak(const struct machine_shortcuts_config *config,
                    const struct state_components *previous_components,
                    struct xkb_events *events, ssize_t remap_event)
 {
-    if (config->targets &&
-        (state->components.mods & config->mask) &&
-        (config->targets[state->components.group] !=
-         XKB_LAYOUT_INVALID)) {
+    if (!config->entries) {
+        /* No shortcuts tweak */
+        return remap_event;
+    }
+
+    const struct xkb_shortcuts_config_entry * const entry =
+        &config->entries[state->components.group];
+
+    if (entry->target != XKB_LAYOUT_INVALID &&
+        (entry->mods & state->components.mods)) {
         /*
          * Activate shortcuts tweak:
          * 1. The real base group is saved by the caller, to be restored by
@@ -3429,7 +3836,8 @@ do_shortcuts_tweak(const struct machine_shortcuts_config *config,
             /* Create new event */
             remap_event = (ssize_t) darray_size(events->queue);
             darray_append(events->queue, (struct xkb_event) {
-                .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+                .ctx = events->ctx, /* borrowed from events */
+                .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
                 .components = {
                     .components = {0},
                     .changed = 0
@@ -3441,7 +3849,7 @@ do_shortcuts_tweak(const struct machine_shortcuts_config *config,
                 darray_item(events->queue, remap_event).components.components;
         }
         new.components.base_group
-            = (int32_t) config->targets[state->components.group]
+            = (int32_t) entry->target
             - state->components.latched_group
             - state->components.locked_group;
         xkb_state_update_derived(&new);
@@ -3454,20 +3862,20 @@ do_shortcuts_tweak(const struct machine_shortcuts_config *config,
 
         state->components.group = new.components.group;
     } else {
-        /* No shortcuts tweak */
+        /* Deactivated entry or modifiers do not match */
     }
     return remap_event;
 }
 
 static void
 undo_tweaks(const struct xkb_state *state,
-            const struct state_components *previous_components,
+            const struct state_components *initial_components,
             struct xkb_events *events)
 {
     /* Get last component event */
     const struct xkb_event *event = NULL;
     darray_foreach_reverse(event, events->queue) {
-        if (event->type == XKB_EVENT_TYPE_COMPONENTS_CHANGE)
+        if (event->type == XKB_EVENT_TYPE_STATE_COMPONENTS)
             break;
     }
     if (!event)
@@ -3475,13 +3883,14 @@ undo_tweaks(const struct xkb_state *state,
 
     /* Restore state */
     const enum xkb_state_component changed =
-        get_state_component_changes(previous_components,
+        get_state_component_changes(initial_components,
                                     &event->components.components);
     if (changed) {
         darray_append(events->queue, (struct xkb_event) {
-            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .ctx = events->ctx, /* borrowed from events */
+            .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
             .components = {
-                .components = *previous_components,
+                .components = *initial_components,
                 .changed = changed
             }
         });
@@ -3530,7 +3939,7 @@ process_overlayable_key(struct xkb_machine *sm,
         if (key->overlays & sm->overlays.enabled) {
             /* Some relevant overlay is active */
             for (uint32_t stack = sm->overlays.order; stack; stack >>= 4) {
-                static_assert(XKB_OVERLAY_MAX == 8, "");
+                static_assert(XKB_OVERLAY_COUNT == 8, "");
                 const xkb_overlay_index_t overlay = (stack & 0xf) - 1;
                 const xkb_overlay_mask_t mask =
                     (xkb_overlay_mask_t)(1u << overlay);
@@ -3581,7 +3990,7 @@ process_overlayable_key(struct xkb_machine *sm,
     return key;
 }
 
-enum xkb_error_code
+enum xkb_status
 xkb_machine_process_key(struct xkb_machine *sm,
                         xkb_keycode_t kc, enum xkb_key_direction direction,
                         struct xkb_events *events)
@@ -3595,7 +4004,17 @@ xkb_machine_process_key(struct xkb_machine *sm,
     if (!key || (direction == XKB_KEY_REPEATED && !key->repeats))
         return XKB_SUCCESS;
 
-    const struct state_components previous_components = state->base.components;
+    const struct state_components initial_components = state->base.components;
+
+    if (direction == XKB_KEY_DOWN &&
+        (sm->base.base.components.controls & XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS) &&
+        (sm->base.flags & XKB_A11Y_STICKY_KEYS_NO_SIMULTANEOUS_KEYS) &&
+        state->base.components.base_mods) {
+        /* Deactivate sticky keys if a modifier was already held down*/
+        state_update_enabled_controls(state,
+                                      XKB_KEYBOARD_CONTROL_A11Y_STICKY_KEYS,
+                                      0, events);
+    }
 
     if (key->overlays)
         key = process_overlayable_key(sm, key, direction);
@@ -3604,8 +4023,17 @@ xkb_machine_process_key(struct xkb_machine *sm,
                                              &state->base, events, key);
 
     remap_event = do_shortcuts_tweak(&sm->config.shortcuts, &state->base,
-                                     &previous_components, events, remap_event);
+                                     &initial_components, events, remap_event);
 
+    if (remap_event >= 0) {
+        // TODO: what about merging state event for RedirectKey?
+        darray_append(events->queue, (struct xkb_event) {
+            .ctx = events->ctx, /* borrowed from events */
+            .type = XKB_EVENT_TYPE_FRAME,
+        });
+    }
+
+    state->update_flags = STATE_REQUIRE_KEY_EVENT;
     state->set_mods = 0;
     state->clear_mods = 0;
 
@@ -3635,86 +4063,130 @@ xkb_machine_process_key(struct xkb_machine *sm,
 
     xkb_state_update_derived(&state->base);
 
-    bool has_key_event = false;
-    const struct xkb_event *event;
-    darray_foreach(event, events->queue) {
-        switch (event->type) {
-        case XKB_EVENT_TYPE_KEY_DOWN:
-        case XKB_EVENT_TYPE_KEY_REPEATED:
-        case XKB_EVENT_TYPE_KEY_UP:
-            has_key_event = true;
-            break;
-        default:
-            continue;
-        }
-    }
-
-    if (!has_key_event) {
-        /*
-         * Append key event only if we did not generate it before with e.g.
-         * RedirectKey().
-         */
+    /*
+     * Insert key event only if actions did not override it, e.g.:
+     * - RedirectKey() append its own key event;
+     * - MovePointer() and PointerButton() generate pointer events instead
+     *   of key events;
+     * - TerminateServer() generate a Server event instead of key events.
+     */
+    if (state->update_flags & STATE_REQUIRE_KEY_EVENT) {
         darray_append(events->queue, (struct xkb_event) {
-            .type = (direction == XKB_KEY_UP)
-                ? XKB_EVENT_TYPE_KEY_UP
-                : (direction == XKB_KEY_REPEATED)
-                    ? XKB_EVENT_TYPE_KEY_REPEATED
-                    : XKB_EVENT_TYPE_KEY_DOWN,
-            .keycode = key->keycode
+            .ctx = events->ctx, /* borrowed from events */
+            .type = XKB_EVENT_TYPE_KEY,
+            .key = {
+                .keycode = key->keycode,
+                .direction = direction
+            }
         });
     }
 
     if (remap_event >= 0) {
         // FIXME: fragile if last state change does not restore the state to the remap event
-        undo_tweaks(&state->base, &previous_components, events);
+        undo_tweaks(&state->base, &initial_components, events);
     }
 
     const enum xkb_state_component changed = get_state_component_changes(
-        &previous_components, &state->base.components
+        &initial_components, &state->base.components
     );
     if (changed) {
-        if (changed & XKB_STATE_CONTROLS)
+        if (changed & XKB_STATE_CONTROLS_EFFECTIVE)
             machine_update_overlays(sm);
 
+        // TODO: merge with previous state event, if any
+
         darray_append(events->queue, (struct xkb_event) {
-            .type = XKB_EVENT_TYPE_COMPONENTS_CHANGE,
+            .ctx = events->ctx, /* borrowed from events */
+            .type = XKB_EVENT_TYPE_STATE_COMPONENTS,
             .components = {
                 .components = state->base.components,
                 .changed = changed
             }
         });
     }
+
+    if (!darray_empty(events->queue) &&
+        darray_item(events->queue, darray_size(events->queue) - 1).type !=
+        XKB_EVENT_TYPE_FRAME)
+    {
+        darray_append(events->queue, (struct xkb_event) {
+            .ctx = events->ctx, /* borrowed from events */
+            .type = XKB_EVENT_TYPE_FRAME,
+        });
+    }
+
     return XKB_SUCCESS;
 }
 
 struct xkb_events *
-xkb_events_new_batch(struct xkb_context *context, enum xkb_events_flags flags)
+xkb_events_new(struct xkb_context * restrict context,
+               const struct xkb_events_config * restrict config,
+               enum xkb_status * restrict status)
 {
-    static const enum xkb_events_flags XKB_EVENTS_FLAGS = XKB_EVENTS_NO_FLAGS;
+    /* Handle default configuration */
+    static const struct xkb_events_config default_config = {
+        .size = sizeof(default_config)
+    };
+    if (!config)
+        config = &default_config;
 
-    if (flags & ~XKB_EVENTS_FLAGS) {
-        log_err_func(context, XKB_LOG_MESSAGE_NO_ID,
-                     "unrecognized events batch flags: %#x\n",
-                     (flags & ~XKB_EVENTS_FLAGS));
+    /* Check ABI compatibility */
+    const enum xkb_status abi_error = xkb_check_state_abi(config);
+    if (abi_error) {
+        xkb_log_abi_error(context, __func__, abi_error);
+        if (status)
+            *status = abi_error;
+        return NULL;
+    }
+
+    /* Sanitize input */
+    const uint32_t invalid_flags =
+        (config->flags & ~(uint32_t)XKB_EVENTS_FLAGS_VALUES);
+    if (invalid_flags) {
+        log_err_func(context, XKB_ERROR_UNSUPPORTED_EVENTS_FLAGS_,
+                     "unrecognized events collection flags: 0x%"PRIx32"\n",
+                     invalid_flags);
+        if (status)
+            *status = XKB_ERROR_UNSUPPORTED_EVENTS_FLAGS;
         return NULL;
     }
 
     struct xkb_events *events = calloc(1, sizeof(*events));
-    if (events == NULL) {
-        log_err(context, XKB_ERROR_ALLOCATION_ERROR,
-                "%s: cannot allocate state events collection\n", __func__);
-        return events;
+    if (!events) {
+        log_err_func1(context, XKB_ERROR_ALLOCATION_FAILURE_,
+                      "cannot allocate state events collection\n");
+        if (status)
+            *status = XKB_ERROR_ALLOCATION_FAILURE;
+        return NULL;
     }
+
+    /* Pre-allocate event queue */
     darray_init(events->queue);
-    events->next = 0;
+    static const darray_size_t queue_initial_size = 16;
+    darray_resize(events->queue, queue_initial_size);
+    // TODO: proper safe darray_resize() with return value
+    if (!darray_items(events->queue)) {
+        log_err_func1(context, XKB_ERROR_ALLOCATION_FAILURE_,
+                      "cannot allocate state events queue\n");
+        xkb_events_destroy(events);
+        if (status)
+            *status = XKB_ERROR_ALLOCATION_FAILURE;
+        return NULL;
+    }
+    darray_size(events->queue) = 0;
+
     events->ctx = xkb_context_ref(context);
+    events->next = 0;
+
+    if (status)
+        *status = XKB_SUCCESS;
     return events;
 }
 
 void
 xkb_events_destroy(struct xkb_events *events)
 {
-    if (events == NULL)
+    if (!events)
         return;
     darray_free(events->queue);
     xkb_context_unref(events->ctx);
@@ -3738,81 +4210,468 @@ xkb_event_get_type(const struct xkb_event *event)
     return event->type;
 }
 
-xkb_keycode_t
-xkb_event_get_keycode(const struct xkb_event *event)
+enum xkb_status
+xkb_event_get_keycode(const struct xkb_event *event,
+                      xkb_keycode_t *keycode,
+                      enum xkb_key_direction *direction)
 {
-    switch (event->type) {
-    case XKB_EVENT_TYPE_KEY_DOWN:
-    case XKB_EVENT_TYPE_KEY_REPEATED:
-    case XKB_EVENT_TYPE_KEY_UP:
-        return event->keycode;
-    default:
-        return XKB_KEYCODE_INVALID;
+    if (event->type == XKB_EVENT_TYPE_KEY) {
+        *keycode = event->key.keycode;
+        *direction = event->key.direction;
+        return XKB_SUCCESS;
+    } else {
+        return XKB_ERROR_EVENT_TYPE_MISMATCH;
     }
 }
 
-enum xkb_state_component
-xkb_event_get_changed_components(const struct xkb_event *event)
+enum xkb_status
+xkb_event_get_components(const struct xkb_event * restrict event,
+                         struct xkb_event_components * restrict components)
 {
-    return (event->type == XKB_EVENT_TYPE_COMPONENTS_CHANGE)
-        ? event->components.changed
-        : 0;
+    if (event->type != XKB_EVENT_TYPE_STATE_COMPONENTS)
+        return XKB_ERROR_EVENT_TYPE_MISMATCH;
+
+    /* Check ABI compatibility */
+    const enum xkb_status status = xkb_check_state_abi(components);
+    if (status != XKB_SUCCESS) {
+        xkb_log_abi_error(event->ctx, __func__, status);
+        return status;
+    }
+
+    components->changed = (uint32_t)event->components.changed;
+    components->depressed_mods = event->components.components.base_mods;
+    components->latched_mods = event->components.components.latched_mods;
+    components->locked_mods = event->components.components.locked_mods;
+    components->mods = event->components.components.mods;
+    components->depressed_layout = event->components.components.base_group;
+    components->latched_layout = event->components.components.latched_group;
+    components->locked_layout = event->components.components.locked_group;
+    components->layout = event->components.components.group;
+    components->leds = event->components.components.leds;
+    components->controls = (uint32_t)event->components.components.controls;
+
+    return XKB_SUCCESS;
 }
 
-enum xkb_keyboard_control_flags
-xkb_event_serialize_enabled_controls(const struct xkb_event *event,
-                                     enum xkb_state_component components)
+enum xkb_status
+xkb_event_get_pointer_motion(const struct xkb_event * restrict event,
+                             struct xkb_event_pointer_motion * restrict motion)
 {
-    return (event->type == XKB_EVENT_TYPE_COMPONENTS_CHANGE)
-        ? serialize_controls(&event->components.components, components)
-        : 0;
+    if (event->type != XKB_EVENT_TYPE_POINTER_MOTION)
+        return XKB_ERROR_EVENT_TYPE_MISMATCH;
+
+    /* Check ABI compatibility */
+    const enum xkb_status status = xkb_check_state_abi(motion);
+    if (status != XKB_SUCCESS) {
+        xkb_log_abi_error(event->ctx, __func__, status);
+        return status;
+    }
+
+    motion->flags = event->pointer_motion.flags;
+    motion->x = event->pointer_motion.x;
+    motion->y = event->pointer_motion.y;
+
+    return XKB_SUCCESS;
 }
 
-xkb_mod_mask_t
-xkb_event_serialize_mods(const struct xkb_event *event,
-                         enum xkb_state_component components)
+enum xkb_status
+xkb_event_get_pointer_button(const struct xkb_event * restrict event,
+                             struct xkb_event_pointer_button * restrict button)
 {
-    return (event->type == XKB_EVENT_TYPE_COMPONENTS_CHANGE)
-        ? serialize_mods(&event->components.components, components)
-        : 0;
+    if (event->type != XKB_EVENT_TYPE_POINTER_BUTTON)
+        return XKB_ERROR_EVENT_TYPE_MISMATCH;
+
+    /* Check ABI compatibility */
+    const enum xkb_status status = xkb_check_state_abi(button);
+    if (status != XKB_SUCCESS) {
+        xkb_log_abi_error(event->ctx, __func__, status);
+        return status;
+    }
+
+    button->button = event->pointer_button.button;
+    button->state = event->pointer_button.state;
+    button->count = event->pointer_button.count;
+
+    return XKB_SUCCESS;
 }
 
-xkb_layout_index_t
-xkb_event_serialize_layout(const struct xkb_event *event,
-                           enum xkb_state_component components)
+enum xkb_status
+xkb_event_get_virtual_console(const struct xkb_event * restrict event,
+                              int8_t * restrict index_or_offset,
+                              bool * restrict is_offset)
 {
-    return (event->type == XKB_EVENT_TYPE_COMPONENTS_CHANGE)
-        ? serialize_layout(&event->components.components, components)
-        : XKB_LAYOUT_INVALID;
+    if (event->type != XKB_EVENT_TYPE_SWITCH_VIRTUAL_CONSOLE)
+        return XKB_ERROR_EVENT_TYPE_MISMATCH;
+
+    *index_or_offset = event->virtual_console.index_or_offset;
+    *is_offset = event->virtual_console.is_offset;
+
+    return XKB_SUCCESS;
 }
 
-enum xkb_state_component
-xkb_state_update_event(struct xkb_state *base_state,
-                       const struct xkb_event *event)
+enum xkb_status
+xkb_state_update_event(struct xkb_state * restrict base_state,
+                       const struct xkb_event * restrict event,
+                       enum xkb_state_component * restrict changed)
 {
     /* Guard against server-only state */
     assert(base_state->mode == SERVER_COMPANION ||
            base_state->mode == LEGACY_MIXED_STATE);
     if (base_state->mode != SERVER_COMPANION &&
         base_state->mode != LEGACY_MIXED_STATE) {
-        log_err(base_state->keymap->ctx, XKB_ERROR_UNEXPECTED_STATE_MODE,
+        log_err(base_state->keymap->ctx, XKB_ERROR_UNEXPECTED_STATE_MODE_,
                 "%s: Unexpected state type %d\n", __func__, base_state->mode);
-        return 0;
+        return XKB_ERROR_UNEXPECTED_STATE_MODE;
     }
 
     struct xkb_client_state * const state =
         (struct xkb_client_state *)base_state;
 
-    if (event->type == XKB_EVENT_TYPE_COMPONENTS_CHANGE) {
+    if (event->type == XKB_EVENT_TYPE_STATE_COMPONENTS) {
         const struct state_components prev_components = state->base.components;
         state->base.components = event->components.components;
         /*
          * Recompute the changes instead of using the event value, because we do
          * not know if the event’s queue and the state are synced.
          */
-        return get_state_component_changes(&prev_components,
-                                           &state->base.components);
+        if (changed)
+            *changed = get_state_component_changes(&prev_components,
+                                                   &state->base.components);
     } else {
-        return 0;
+        if (changed)
+            *changed = 0;
     }
+    return XKB_SUCCESS;
+}
+
+static void
+append_pointer_button(struct xkb_events * restrict events,
+                      struct xkb_filter * restrict filter,
+                      enum xkb_pointer_button_state button_state,
+                      uint8_t count)
+{
+    darray_append(events->queue, (struct xkb_event) {
+        .ctx = events->ctx, /* borrowed from events */
+        .type = XKB_EVENT_TYPE_POINTER_BUTTON,
+        .pointer_button = {
+            .size = sizeof(((struct xkb_event*)0)->pointer_button),
+            .button = filter->priv,
+            .state = button_state,
+            .count = count,
+        }
+    });
+}
+
+static void
+xkb_filter_pointer_button_new(struct xkb_server_state *state,
+                              struct xkb_events *events,
+                              struct xkb_filter *filter)
+{
+    if (!events || state->base.mode != SERVER_STATE ||
+        !(state->base.components.controls & XKB_KEYBOARD_CONTROL_MOUSE_KEYS)) {
+        filter->func = NULL;
+        return;
+    }
+
+    struct xkb_machine * const sm = (struct xkb_machine *)state;
+
+    /* Resolve button */
+    const xkb_pointer_button_index_t button =
+        (filter->action.btn.button == XKB_POINTER_BUTTON_DEFAULT)
+            ? sm->mouse.default_button
+            : filter->action.btn.button;
+    filter->priv = button;
+
+    const enum xkb_pointer_button_state button_state =
+        XKB_POINTER_BUTTON_PRESSED;
+    append_pointer_button(events, filter, button_state,
+                          filter->action.btn.count);
+    state->update_flags &= ~STATE_REQUIRE_KEY_EVENT;
+}
+
+static bool
+xkb_filter_pointer_button_func(struct xkb_server_state *state,
+                               struct xkb_events *events,
+                               struct xkb_filter *filter,
+                               const struct xkb_key *key,
+                               enum xkb_key_direction direction)
+{
+    if (key != filter->key || !events)
+        return XKB_FILTER_CONTINUE;
+
+    state->update_flags &= ~STATE_REQUIRE_KEY_EVENT;
+
+    switch (direction) {
+    case XKB_KEY_DOWN:
+        filter->refcnt++;
+        /* fallthrough */
+    case XKB_KEY_REPEATED:
+        return XKB_FILTER_CONSUME;
+    default:
+        if (--filter->refcnt > 0)
+            return XKB_FILTER_CONSUME;
+    }
+
+    if (!filter->action.btn.count)
+        append_pointer_button(events, filter, XKB_POINTER_BUTTON_RELEASED, 0);
+
+    filter->func = NULL;
+    return XKB_FILTER_CONSUME;
+}
+
+struct xkb_filter_pointer_lock_button_priv {
+    uint32_t button:31;
+#ifdef _WIN32
+    uint32_t locked:1; // MSVC requires matching types to pack bitfields
+#else
+    bool locked:1;
+#endif
+};
+
+enum {
+    XKB_FILTER_POINTER_LOCK_BUTTON_PRIV_WIDTH =
+        sizeof(struct xkb_filter_pointer_lock_button_priv) * CHAR_BIT,
+    XKB_FILTER_POINTER_LOCK_BUTTON_PRIV_MAX =
+        (UINT64_C(1) << XKB_FILTER_POINTER_LOCK_BUTTON_PRIV_WIDTH) - 1
+};
+
+static_assert(sizeof(struct xkb_filter_pointer_lock_button_priv) ==
+              sizeof(((struct xkb_filter*)0)->priv),
+              "");
+static_assert((uint32_t)XKB_POINTER_BUTTON_MAX < (uint32_t)XKB_FILTER_POINTER_LOCK_BUTTON_PRIV_MAX,
+              "xkb_filter_pointer_lock_button_priv cannot store button");
+
+static void
+xkb_filter_pointer_lock_button_new(struct xkb_server_state *state,
+                                   struct xkb_events *events,
+                                   struct xkb_filter *filter)
+{
+    if (!events || state->base.mode != SERVER_STATE ||
+        !(state->base.components.controls & XKB_KEYBOARD_CONTROL_MOUSE_KEYS)) {
+        filter->func = NULL;
+        return;
+    }
+
+    state->update_flags &= ~STATE_REQUIRE_KEY_EVENT;
+
+    struct xkb_machine * const sm = (struct xkb_machine *)state;
+
+    /* Resolve button */
+    const xkb_pointer_button_index_t button =
+        (filter->action.btn.button == XKB_POINTER_BUTTON_DEFAULT)
+            ? sm->mouse.default_button
+            : filter->action.btn.button;
+
+    static_assert(XKB_POINTER_BUTTON_MASK_WIDTH <= 8,
+                  "invalid UINTx_C() macro");
+    static_assert(XKB_POINTER_BUTTON_MAX <= XKB_POINTER_BUTTON_MASK_WIDTH,
+                  "invalid left shift");
+    const xkb_pointer_button_mask_t mask = (UINT8_C(1) << button);
+
+    const bool locked = (sm->mouse.locked_buttons & mask);
+
+    if (!locked && !(filter->action.btn.flags & ACTION_LOCK_NO_LOCK)) {
+        sm->mouse.locked_buttons |= mask;
+        filter->priv = button;
+        append_pointer_button(events, filter, XKB_POINTER_BUTTON_PRESSED, 0);
+    }
+
+    struct xkb_filter_pointer_lock_button_priv *priv =
+        (struct xkb_filter_pointer_lock_button_priv*)&filter->priv;
+    priv->button = button,
+    priv->locked = locked;
+}
+
+static bool
+xkb_filter_pointer_lock_button_func(struct xkb_server_state *state,
+                                    struct xkb_events *events,
+                                    struct xkb_filter *filter,
+                                    const struct xkb_key *key,
+                                    enum xkb_key_direction direction)
+{
+    if (key != filter->key || !events || state->base.mode != SERVER_STATE)
+        return XKB_FILTER_CONTINUE;
+
+    state->update_flags &= ~STATE_REQUIRE_KEY_EVENT;
+
+    switch (direction) {
+    case XKB_KEY_DOWN:
+        filter->refcnt++;
+        /* fallthrough */
+    case XKB_KEY_REPEATED:
+        return XKB_FILTER_CONSUME;
+    default:
+        if (--filter->refcnt > 0)
+            return XKB_FILTER_CONSUME;
+    }
+
+    const struct xkb_filter_pointer_lock_button_priv *priv =
+        (struct xkb_filter_pointer_lock_button_priv*)&filter->priv;
+
+    if (priv->locked && !(filter->action.btn.flags & ACTION_LOCK_NO_UNLOCK)) {
+        struct xkb_machine * const sm = (struct xkb_machine *)state;
+
+        static_assert(XKB_POINTER_BUTTON_MASK_WIDTH <= 8,
+                    "invalid UINTx_C() macro");
+        static_assert(XKB_POINTER_BUTTON_MAX <= XKB_POINTER_BUTTON_MASK_WIDTH,
+                    "invalid left shift");
+        const xkb_pointer_button_mask_t mask = (UINT8_C(1) << priv->button);
+
+        sm->mouse.locked_buttons &= ~mask;
+        filter->priv = priv->button;
+        append_pointer_button(events, filter, XKB_POINTER_BUTTON_RELEASED, 0);
+    }
+
+    filter->func = NULL;
+    return XKB_FILTER_CONSUME;
+}
+
+static void
+xkb_filter_pointer_set_default_button_new(struct xkb_server_state *state,
+                                          struct xkb_events *events,
+                                          struct xkb_filter *filter)
+{
+    if (!events || state->base.mode != SERVER_STATE ||
+        !(state->base.components.controls & XKB_KEYBOARD_CONTROL_MOUSE_KEYS)) {
+        filter->func = NULL;
+        return;
+    }
+
+    state->update_flags &= ~STATE_REQUIRE_KEY_EVENT;
+
+    struct xkb_machine * const sm = (struct xkb_machine *)state;
+
+    static_assert(2 * XKB_POINTER_BUTTON_MAX <= INT_MAX, "lossy conversion");
+    int button = (filter->action.dflt.flags & ACTION_ABSOLUTE_SWITCH)
+        ? filter->action.dflt.value
+        : sm->mouse.default_button + filter->action.dflt.value;
+
+    /* Wrap into range */
+    const int rem = button % XKB_POINTER_BUTTON_MAX;
+    sm->mouse.default_button = (rem >= 0)
+        ? (xkb_pointer_button_index_t)rem
+        : (xkb_pointer_button_index_t)(rem + XKB_POINTER_BUTTON_MAX);
+}
+
+static bool
+xkb_filter_pointer_set_default_button_func(struct xkb_server_state *state,
+                                           struct xkb_events *events,
+                                           struct xkb_filter *filter,
+                                           const struct xkb_key *key,
+                                           enum xkb_key_direction direction)
+{
+    if (key != filter->key || !events)
+        return XKB_FILTER_CONTINUE;
+
+    state->update_flags &= ~STATE_REQUIRE_KEY_EVENT;
+
+    switch (direction) {
+    case XKB_KEY_DOWN:
+        filter->refcnt++;
+        /* fallthrough */
+    case XKB_KEY_REPEATED:
+        return XKB_FILTER_CONSUME;
+    default:
+        if (--filter->refcnt > 0)
+            return XKB_FILTER_CONSUME;
+    }
+
+    filter->func = NULL;
+    return XKB_FILTER_CONTINUE;
+}
+
+static void
+xkb_filter_terminate_server_new(struct xkb_server_state *state,
+                                 struct xkb_events *events,
+                                 struct xkb_filter *filter)
+{
+    if (!events || state->base.mode != SERVER_STATE ||
+        !(((struct xkb_machine *)state)->flags & XKB_MACHINE_SERVER_ACTIONS)) {
+        filter->func = NULL;
+        return;
+    }
+
+    state->update_flags &= ~STATE_REQUIRE_KEY_EVENT;
+
+    darray_append(events->queue, (struct xkb_event) {
+        .ctx = events->ctx, /* borrowed from events */
+        .type = XKB_EVENT_TYPE_TERMINATE_DISPLAY_SERVER,
+    });
+}
+
+static bool
+xkb_filter_terminate_server_func(struct xkb_server_state *state,
+                                 struct xkb_events *events,
+                                 struct xkb_filter *filter,
+                                 const struct xkb_key *key,
+                                 enum xkb_key_direction direction)
+{
+    if (key != filter->key || !events)
+        return XKB_FILTER_CONTINUE;
+
+    state->update_flags &= ~STATE_REQUIRE_KEY_EVENT;
+
+    switch (direction) {
+    case XKB_KEY_DOWN:
+        filter->refcnt++;
+        /* fallthrough */
+    case XKB_KEY_REPEATED:
+        return XKB_FILTER_CONSUME;
+    default:
+        if (--filter->refcnt > 0)
+            return XKB_FILTER_CONSUME;
+    }
+
+    filter->func = NULL;
+    return XKB_FILTER_CONSUME;
+}
+
+static void
+xkb_filter_switch_virtual_console_new(struct xkb_server_state *state,
+                                      struct xkb_events *events,
+                                      struct xkb_filter *filter)
+{
+    if (!events || state->base.mode != SERVER_STATE ||
+        !(((struct xkb_machine *)state)->flags & XKB_MACHINE_SERVER_ACTIONS)) {
+        filter->func = NULL;
+        return;
+    }
+
+    state->update_flags &= ~STATE_REQUIRE_KEY_EVENT;
+
+    darray_append(events->queue, (struct xkb_event) {
+        .ctx = events->ctx, /* borrowed from events */
+        .type = XKB_EVENT_TYPE_SWITCH_VIRTUAL_CONSOLE,
+        .virtual_console = {
+            .index_or_offset = filter->action.screen.screen,
+            .is_offset = !(filter->action.screen.flags & ACTION_ABSOLUTE_SWITCH)
+        }
+    });
+}
+
+static bool
+xkb_filter_switch_virtual_console_func(struct xkb_server_state *state,
+                                       struct xkb_events *events,
+                                       struct xkb_filter *filter,
+                                       const struct xkb_key *key,
+                                       enum xkb_key_direction direction)
+{
+    if (key != filter->key || !events)
+        return XKB_FILTER_CONTINUE;
+
+    state->update_flags &= ~STATE_REQUIRE_KEY_EVENT;
+
+    switch (direction) {
+    case XKB_KEY_DOWN:
+        filter->refcnt++;
+        /* fallthrough */
+    case XKB_KEY_REPEATED:
+        return XKB_FILTER_CONSUME;
+    default:
+        if (--filter->refcnt > 0)
+            return XKB_FILTER_CONSUME;
+    }
+
+    filter->func = NULL;
+    return XKB_FILTER_CONSUME;
 }

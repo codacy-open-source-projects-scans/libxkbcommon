@@ -3,7 +3,7 @@
 xkb_feature:
   - name: XKB_FEATURE_ENUM_FEATURE
     value: 1
-  - name: XKB_FEATURE_ENUM_ERROR_CODE
+  - name: XKB_FEATURE_ENUM_STATUS
     value: 1000
   - name: XKB_FEATURE_ENUM_CONTEXT_FLAGS
     value: 3200
@@ -37,10 +37,16 @@ xkb_feature:
     value: 24840
   - name: XKB_FEATURE_ENUM_MACHINE_BUILDER_FLAGS
     value: 25200
+  - name: XKB_FEATURE_ENUM_MACHINE_FLAGS
+    value: 26200
   - name: XKB_FEATURE_ENUM_EVENT_TYPE
     value: 27000
   - name: XKB_FEATURE_ENUM_KEY_DIRECTION
     value: 27020
+  - name: XKB_FEATURE_ENUM_POINTER_MOTION_FLAGS
+    value: 27040
+  - name: XKB_FEATURE_ENUM_POINTER_BUTTON_STATE
+    value: 27041
   - name: XKB_FEATURE_ENUM_EVENTS_FLAGS
     value: 27600
   - name: XKB_FEATURE_ENUM_COMPOSE_FORMAT

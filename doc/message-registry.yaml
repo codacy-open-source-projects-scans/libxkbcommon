@@ -19,6 +19,11 @@
 
 # TODO: fix missing detailed description, examples, resolution
 
+- id: "deprecated-section"
+  code: 21
+  added: 1.14.0
+  type: warning
+  description: "XKB section is deprecated"
 - id: "malformed-number-literal"
   code: 34
   added: ALWAYS
@@ -71,7 +76,19 @@
 
     [encoding]: https://www.x.org/releases/current/doc/xproto/x11protocol.html#keysym_encoding
 
-    @see keysyms
+    @sa keysyms
+- id: "unsupported-state-mode"
+  code: 86
+  type: error
+  visibility: public
+  added: 1.14.0
+  description: Unsupported `xkb_state_mode` value
+  details: |
+    Use the following to check if the linked libxkbcommon supports a given mode:
+
+    ```c
+    xkb_feature_supported(XKB_FEATURE_ENUM_STATE_MODE, flag)
+    ```
 - id: "illegal-keycode-alias"
   code: 101
   added: ALWAYS
@@ -107,6 +124,12 @@
         ```c
         key <AB08> {[ comma, semicolon, periodcentered, multiply ]};
         ```
+- id: "event-type-mismatch"
+  code: 113
+  type: error
+  visibility: public
+  added: 1.14.0
+  description: "Event getter does not match the event’s type"
 - id: "undeclared-virtual-modifier"
   code: 123
   added: ALWAYS
@@ -117,6 +140,18 @@
   added: ALWAYS
   type: error
   description: "A buffer has an insufficient size"
+- id: "unsupported-key-iterator-flags"
+  code: 138
+  type: error
+  visibility: public
+  added: 1.14.0
+  description: Unsupported `xkb_keymap_key_iterator_flags` value
+  details: |
+    Use the following to check if the linked libxkbcommon supports a given flag:
+
+    ```c
+    xkb_feature_supported(XKB_FEATURE_ENUM_KEYMAP_KEY_ITERATOR_FLAGS, flag)
+    ```
 - id: "wrong-statement-type"
   code: 150
   added: ALWAYS
@@ -164,7 +199,7 @@
   added: 1.14.0
   description: The given layout out-of-range policy is not supported
   details: |
-    Use the following to check if the linked libxkbcommon library supports a given flag:
+    Use the following to check if the linked libxkbcommon supports a given flag:
 
     ```c
     xkb_feature_supported(XKB_FEATURE_ENUM_LAYOUT_OUT_OF_RANGE_POLICY, flag)
@@ -175,14 +210,14 @@
   type: error
   description: "The statement is unknown"
   details: |
-    libxkbcommon encountered an unknown statement and either:
+    xkbcommon encountered an unknown statement and either:
     - rejected it (strict mode);
     - accepted but discarded it in order to provide forward-compatibility (lenient mode).
 
     Please check if:
     - it is a typo;
     - the [keymap format](@ref xkb_keymap_format) used for parsing is correct;
-    - the statement is supported in a [newer version of libxkbcommon](release-notes.md).
+    - the statement is supported in a [newer version of xkbcommon](release-notes.md).
 - id: "unsupported-layout-index"
   code: 237
   type: error
@@ -192,7 +227,7 @@
     public: 1.14.0
   description: "Layout index is not supported"
   details: |
-    libxkbcommon supports different *layout index* ranges, depending on the target
+    xkbcommon supports different *layout index* ranges, depending on the target
     *keymap format*:
     - `::XKB_KEYMAP_FORMAT_TEXT_V1`: 1..{{XKB_MAX_GROUPS_X11}}
     - `::XKB_KEYMAP_FORMAT_TEXT_V2`: 1..{{XKB_MAX_GROUPS}}
@@ -211,6 +246,38 @@
   added: ALWAYS
   type: warning
   description: "Conflicting “map” entries in type definition"
+- id: "unsupported-keymap-format"
+  code: 277
+  added:
+    internal: ALWAYS
+    public: 1.14.0
+  type: error
+  visibility: public
+  description: "Unsupported keymap format"
+  details: |
+    See `xkb_keymap_format` for the list of valid values.
+- id: "unrecognized-rmlvo-value"
+  code: 282
+  added: ALWAYS
+  type: error
+  description: "Unrecognized RMLVO value ignored"
+  details: |
+    The corresponding [RMLVO] value did not match any [rule][rules] and was ignored,
+    possibly resulting in an *incomplete layout*.
+
+    This may be:
+    - An issue with the [RMLVO] value not being in sync with the XKB database.
+      Updating the keyboard settings should fix it.
+    - An issue with the rules:
+      - If using *custom* XKB files, please check that you followed the
+        [corresponding instructions](@ref custom-configuration).
+        E.g. custom *options* requires a [dedicated entry](@ref custom-option).
+      - If using the *standard* rules, please file a bug report to the
+        [xkeyboard-config] project.
+
+    [RMLVO]: @ref RMLVO-intro
+    [xkeyboard-config]: https://gitlab.freedesktop.org/xkeyboard-config/xkeyboard-config
+    [rules]: @ref config-rules-def
 - id: "undefined-key-type"
   code: 286
   added: ALWAYS
@@ -275,6 +342,15 @@
   details: |
     This action will be treated as `NoAction()`. See @ref unsupported-legacy-x11-actions ""
     for further information.
+- id: "layout-count-limit-exceeded"
+  code: 366
+  added:
+    internal: ALWAYS
+    public: 1.14.0
+  type: error
+  visibility: public
+  description: "Layout count limit exceeded for the corresponding keymap format"
+  # TODO: details
 - id: "unsupported-a11y-flags"
   code: 371
   type: error
@@ -282,7 +358,7 @@
   added: 1.14.0
   description: Unsupported `xkb_a11y_flags` value
   details: |
-    Use the following to check if the linked libxkbcommon library supports a given flag:
+    Use the following to check if the linked libxkbcommon supports a given flag:
 
     ```c
     xkb_feature_supported(XKB_FEATURE_ENUM_A11Y_FLAGS, flag)
@@ -370,6 +446,25 @@
     ```c
     .size = sizeof(struct xkb_foo)
     ```
+- id: "invalid-modifier-map-mask"
+  code: 453
+  added: 1.14.0
+  type: error
+  description: "Invalid real modifier mask in modifier map definition"
+  details: |
+    <dl>
+    <dt>Parsing</dt>
+    <dd>
+    `::XKB_KEYMAP_FORMAT_TEXT_V1` allows only a *single* X11 core modifier
+    per [`modifier_map`](@ref modmap-statement) entry.
+    </dd>
+    <dt>Serializing</dt>
+    <dd>
+    `::XKB_KEYMAP_FORMAT_TEXT_V1` allows only X11 core modifiers and can
+    serialize multiple X11 core modifiers only if some of the original
+    [`modifier_map`](@ref modmap-statement) entries used a keysym.
+    </dd>
+    </dl>
 - id: "conflicting-key-symbol"
   code: 461
   added: ALWAYS
@@ -417,15 +512,28 @@
   added: ALWAYS
   type: warning
   description: "Conflicting definitions of a key name or alias"
+- id: "invalid-keycode"
+  code: 538
+  added:
+    internal: ALWAYS
+    public: 1.14.0
+  type: error
+  visibility: public
+  description: "Invalid keycode"
+  details: |
+    See `xkb_keycode_t` for the valid range of keycodes.
 - id: "invalid-file-encoding"
   code: 542
   added: 1.7.0
   type: error
   description: "Invalid file encoding"
-- id: "allocation-error"
+- id: "allocation-failure"
   code: 550
-  added: ALWAYS
+  added:
+    internal: ALWAYS
+    public: 1.14.0
   type: error
+  visibility: public
   description: "Cannot allocate memory"
 - id: "invalid-action-field"
   code: 563
@@ -455,6 +563,18 @@
   details: |
     xkbcommon support the Unicode sequence `\u{NNNN}`, where `NNNN` denotes a
     Unicode code point in hexadecimal format in the range `1‥0x10ffff`.
+- id: "unsupported-events-flags"
+  code: 611
+  type: error
+  visibility: public
+  added: 1.14.0
+  description: Unsupported `xkb_events_flags` value
+  details: |
+    Use the following to check if the linked libxkbcommon supports a given flag:
+
+    ```c
+    xkb_feature_supported(XKB_FEATURE_ENUM_EVENTS_FLAGS, flag)
+    ```
 - id: "invalid-real-modifier"
   code: 623
   added: ALWAYS
@@ -564,6 +684,18 @@
   added: ALWAYS
   type: warning
   description: "Reference to an undefined keycode"
+- id: "unsupported-machine-flags"
+  code: 755
+  type: error
+  visibility: public
+  added: 1.14.0
+  description: Unsupported `xkb_machine_flags` value
+  details: |
+    Use the following to check if the linked libxkbcommon supports a given flag:
+
+    ```c
+    xkb_feature_supported(XKB_FEATURE_ENUM_MACHINE_FLAGS, flag)
+    ```
 - id: "invalid-expression-type"
   code: 784
   added: ALWAYS
@@ -591,6 +723,16 @@
   added: ALWAYS
   type: error
   description: "Keymap compilation failed"
+- id: "unsupported-keymap-serialization-flags"
+  code: 829
+  added:
+    internal: 1.12.0
+    public: 1.14.0
+  type: error
+  visibility: public
+  description: "Unsupported keymap serialization flags"
+  details: |
+    See `::xkb_keymap_serialize_flags` for the list of valid flags.
 - id: "unknown-action-type"
   code: 844
   added: ALWAYS
@@ -617,6 +759,18 @@
   added: ALWAYS
   type: warning
   description: "Warn if there are conflicting key types while merging groups"
+- id: "unsupported-machine-builder-flags"
+  code: 899
+  type: error
+  visibility: public
+  added: 1.14.0
+  description: Unsupported `xkb_machine_builder_flags` value
+  details: |
+    Use the following to check if the linked libxkbcommon supports a given flag:
+
+    ```c
+    xkb_feature_supported(XKB_FEATURE_ENUM_MACHINE_BUILDER_FLAGS, flag)
+    ```
 - id: "conflicting-key-symbols-entry"
   code: 901
   added: ALWAYS
@@ -636,6 +790,13 @@
   details: |
     The caller was compiled against an older version of the library and is
     missing fields that are mandatory in this version.
+- id: "unknown-section-flag"
+  code: 917
+  added: 1.14.0
+  type: error
+  description: "Invalid section flag"
+  details: |
+    See the list of valid [section flags](@ref section-flags-def).
 - id: "conflicting-key-fields"
   code: 935
   added: ALWAYS

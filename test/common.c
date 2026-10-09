@@ -21,16 +21,18 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
+#include "xkbcommon/xkbcommon-status.h"
 #include "xkbcommon/xkbcommon.h"
 
 #include "darray.h"
 #include "keymap.h"
 #include "test.h"
 #include "utils.h"
-#include "utils-paths.h"
+#include "util-paths.h"
+#include "src/features/enums.h"
 #include "src/keysym.h"
 #include "src/xkbcomp/rules.h"
-#include "src/utils-numbers.h"
+#include "src/util-numbers.h"
 
 #include "tools/tools-common.h"
 
@@ -42,7 +44,7 @@ test_init(void)
     /* Make stdout always unbuffered, to ensure we always get it entirely */
     setvbuf(stdout, NULL, _IONBF, BUFSIZ);
 
-    /* Enable to use another locale than C or en_US, so we can catch
+    /* Enable using another locale than C or en_US, so we can catch
      * locale-specific bugs */
     setlocale(LC_ALL, "");
 }
@@ -88,27 +90,74 @@ consume_events(struct xkb_machine *sm,
                xkb_keycode_t *kc)
 {
     const struct xkb_event *event;
+    enum xkb_status status;
+    enum xkb_state_component changed;
     while ((event = xkb_events_next(events))) {
-        switch (xkb_event_get_type(event)) {
-        case XKB_EVENT_TYPE_KEY_DOWN:
-        case XKB_EVENT_TYPE_KEY_REPEATED:
-        case XKB_EVENT_TYPE_KEY_UP:
-            *kc = xkb_event_get_keycode(event);
+        const enum xkb_event_type type = xkb_event_get_type(event);
+
+        /* Only components events may update the base state */
+        status = xkb_state_update_event(state, event, &changed);
+        assert(status == XKB_SUCCESS);
+        assert(type == XKB_EVENT_TYPE_STATE_COMPONENTS || !changed);
+
+        switch (type) {
+        case XKB_EVENT_TYPE_INVALID:
+            assert(!"invalid event");
+            break;
+        case XKB_EVENT_TYPE_FRAME:
+            break;
+        case XKB_EVENT_TYPE_KEY: {
+            enum xkb_key_direction direction;
+            status = xkb_event_get_keycode(event, kc, &direction);
+            assert(status == XKB_SUCCESS);
             if (flags & UNTIL_KEY_EVENT) {
                 /* Stop on key event */
                 return true;
             }
             break;
-        case XKB_EVENT_TYPE_COMPONENTS_CHANGE:
-            xkb_state_update_event(state, event);
+        }
+        case XKB_EVENT_TYPE_STATE_COMPONENTS: {
+            struct xkb_event_components components = {
+                .size = sizeof(components)
+            };
+            status = xkb_event_get_components(event, &components);
+            assert(status == XKB_SUCCESS);
             break;
+        }
+        case XKB_EVENT_TYPE_POINTER_MOTION: {
+            struct xkb_event_pointer_motion motion = {
+                .size = sizeof(motion)
+            };
+            status = xkb_event_get_pointer_motion(event, &motion);
+            assert(status == XKB_SUCCESS);
+            break;
+        }
+        case XKB_EVENT_TYPE_POINTER_BUTTON: {
+            struct xkb_event_pointer_button button = {
+                .size = sizeof(button)
+            };
+            status = xkb_event_get_pointer_button(event, &button);
+            assert(status == XKB_SUCCESS);
+            break;
+        }
+        case XKB_EVENT_TYPE_TERMINATE_DISPLAY_SERVER:
+            /* No associated getter */
+            break;
+        case XKB_EVENT_TYPE_SWITCH_VIRTUAL_CONSOLE: {
+            int8_t index_or_offset;
+            bool is_offset;
+            status = xkb_event_get_virtual_console(event, &index_or_offset,
+                                                   &is_offset);
+            assert(status == XKB_SUCCESS);
+            break;
+        }
         default:
             {} /* Label followed by declaration requires C23 */
-            static_assert(XKB_EVENT_TYPE_COMPONENTS_CHANGE == 4 &&
-                          XKB_EVENT_TYPE_COMPONENTS_CHANGE ==
-                          (enum xkb_event_type) _LAST_XKB_EVENT_TYPE,
+            static_assert(XKB_EVENT_TYPE_SWITCH_VIRTUAL_CONSOLE == 7 &&
+                          XKB_EVENT_TYPE_SWITCH_VIRTUAL_CONSOLE ==
+                          (enum xkb_event_type) _XKB_EVENT_TYPE_MAX,
                           "Missing state event type");
-            /* ignore */
+            assert(!"unhandled event");
         }
     }
     return true;
@@ -208,9 +257,11 @@ test_key_seq_va(struct xkb_keymap *keymap, struct xkb_machine *sm,
                 : (op == REPEAT)
                     ? XKB_KEY_REPEATED
                     : XKB_KEY_UP;
-        tools_print_keycode_state("", state, NULL, kc, direction,
-                                  XKB_CONSUMED_MODE_XKB,
-                                  PRINT_ALL_FIELDS | PRINT_UNILINE);
+        static const struct tools_events_options tool_options = {
+            .consumed_mode = XKB_CONSUMED_MODE_XKB,
+            .print = PRINT_ALL_FIELDS | PRINT_UNILINE,
+        };
+        tools_print_keycode_state("", state, NULL, kc, direction, &tool_options);
 #endif
         fprintf(stderr, "#%02u op %-6s got %d syms for keycode %3"PRIu32,
                 ++count, opstr, nsyms, kc);

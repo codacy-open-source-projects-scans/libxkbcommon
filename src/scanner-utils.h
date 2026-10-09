@@ -15,7 +15,7 @@
 #include "darray.h"
 #include "messages-codes.h"
 #include "utils.h"
-#include "utils-numbers.h"
+#include "util-numbers.h"
 #include "utf8.h"
 
 /* Point to some substring in the file; used to avoid copying. */
@@ -172,6 +172,44 @@ scanner_str(struct scanner *s, const char *string, size_t len)
 }
 
 #define scanner_lit(s, literal) scanner_str(s, literal, sizeof(literal) - 1)
+
+static inline bool
+scanner_rules_is_ident(char ch)
+{
+    return is_graph(ch) && ch != '\\';
+}
+
+/*
+ * A keyword/operator is only valid when it is followed by a character
+ * which cannot continue the token.
+ */
+static inline bool
+scanner_rules_str_token(struct scanner *s, const char *string, size_t len)
+{
+    if (!scanner_str(s, string, len)) {
+        return false;
+    }
+    if (scanner_rules_is_ident(scanner_peek(s))) {
+        /* Backtrack */
+        s->pos -= len;
+        return false;
+    }
+    return true;
+}
+
+#define scanner_rules_lit_token(s, literal) \
+    scanner_rules_str_token((s), (literal), sizeof(literal) - 1)
+
+static inline size_t
+scanner_rules_ident_token(struct scanner *s)
+{
+    size_t len = 0;
+    while (!scanner_eof(s) && scanner_rules_is_ident(s->s[s->pos])) {
+        s->pos++;
+        len++;
+    }
+    return len;
+}
 
 static inline bool
 scanner_buf_append(struct scanner *s, char ch)

@@ -11,7 +11,7 @@
 #include <stdlib.h>
 
 #include "darray.h"
-#include "utils-paths.h"
+#include "util-paths.h"
 #include "xkbcommon/xkbcommon.h"
 #include "src/xkbcomp/keymap-file-iterator.h"
 #include "src/xkbcomp/ast.h"
@@ -570,6 +570,7 @@ test_file_iterator(struct xkb_context *ctx)
         const struct xkb_file_section *section;
         unsigned int s = 0;
         bool ok = true;
+        // NOLINTNEXTLINE(bugprone-assignment-in-selection-statement)
         while ((ok = xkb_file_iterator_next(iter, &section)) && section) {
             fprintf(stderr, "section #%u\n", s);
             if (s >= tests[k].num_sections) {

@@ -23,6 +23,7 @@
 
 #include <linux/input.h>
 
+#include "xkbcommon/xkbcommon-status.h"
 #include "xkbcommon/xkbcommon.h"
 
 #include "src/utils.h"
@@ -42,12 +43,14 @@ struct keyboard {
 static bool verbose = false;
 static bool terminate = false;
 static xkb_keycode_t evdev_offset = 8;
-static bool use_events_api = true;
-static bool report_state_changes = true;
+static struct tools_events_options tool_options = {
+    .consumed_mode = XKB_CONSUMED_MODE_XKB,
+    .print = PRINT_DEFAULT_OPTIONS,
+    .report = REPORT_DEFAULT_OPTIONS,
+    .events_api = true,
+    .local_state = false,
+};
 static bool with_compose = false;
-static enum xkb_consumed_mode consumed_mode = XKB_CONSUMED_MODE_XKB;
-
-enum print_state_options print_options = DEFAULT_PRINT_OPTIONS;
 
 #define DEFAULT_INCLUDE_PATH_PLACEHOLDER "__defaults__"
 #define NLONGS(n) (((n) + LONG_BIT - 1) / LONG_BIT)
@@ -118,17 +121,19 @@ keyboard_new(struct dirent *ent,
         goto err_fd;
     }
 
-    if (use_events_api) {
-        machine = xkb_machine_new(builder);
+    if (tool_options.events_api) {
+        machine = xkb_machine_new(builder, NULL);
         if (!machine) {
             fprintf(stderr, "Couldn't create xkb state machine for %s\n", path);
             ret = -EFAULT;
             goto err_machine;
         }
 
-        events = xkb_events_new_batch(ctx, XKB_EVENTS_NO_FLAGS);
+        enum xkb_status status;
+        events = xkb_events_new(ctx, NULL, &status);
         if (!events) {
-            fprintf(stderr, "Couldn't create xkb events for %s\n", path);
+            fprintf(stderr, "Couldn't create xkb events for %s; code: 0x%x\n",
+                    path, status);
             ret = -EFAULT;
             goto err_xkb_events;
         }
@@ -143,20 +148,24 @@ keyboard_new(struct dirent *ent,
 
     const struct xkb_state_components_update components = {
         .size = sizeof(components),
-        .components = XKB_STATE_CONTROLS,
-        .affect_controls = options->controls.boolean.affect,
+        .components = XKB_STATE_CONTROLS_EFFECTIVE,
+        .affect_controls = options->controls.boolean.affect_flags,
         .controls = options->controls.boolean.flags,
     };
-    const struct xkb_state_update update = {
+    const struct xkb_synthetic_update update = {
         .size = sizeof(update),
         .components = &components,
     };
-    if (use_events_api) {
+    if (tool_options.events_api) {
+        enum xkb_status status =
+            xkb_machine_process_synthetic(machine, &update, events);
         // FIXME: handle error
-        xkb_machine_process_synthetic(machine, &update, events);
+        (void)status;
         const struct xkb_event *event;
         while ((event = xkb_events_next(events))) {
-            xkb_state_update_event(state, event);
+            status = xkb_state_update_event(state, event, NULL);
+            // FIXME: handle error
+            (void)status;
         }
     } else {
         // FIXME: handle error
@@ -314,7 +323,7 @@ process_event(struct keyboard *kbd, uint16_t type, uint16_t code, int32_t value)
             ? XKB_KEY_REPEATED
             : XKB_KEY_DOWN;
 
-    if (use_events_api) {
+    if (tool_options.events_api) {
         /* Use the xkb_machine API */
         const int ret = xkb_machine_process_key(kbd->machine, keycode, direction,
                                                 kbd->events);
@@ -323,8 +332,7 @@ process_event(struct keyboard *kbd, uint16_t type, uint16_t code, int32_t value)
             // TODO: better error handling
         } else {
             tools_print_events(NULL, kbd->state, kbd->events,
-                               kbd->compose_state, consumed_mode,
-                               print_options, report_state_changes);
+                               kbd->compose_state, &tool_options);
         }
     } else {
         /* Use the legacy state API */
@@ -335,7 +343,7 @@ process_event(struct keyboard *kbd, uint16_t type, uint16_t code, int32_t value)
 
         tools_print_keycode_state(
             NULL, kbd->state, kbd->compose_state, keycode, direction,
-            consumed_mode, print_options
+            &tool_options
         );
 
         if (with_compose) {
@@ -348,8 +356,9 @@ process_event(struct keyboard *kbd, uint16_t type, uint16_t code, int32_t value)
         const enum xkb_state_component changed =
             xkb_state_update_key(kbd->state, keycode, direction);
 
-        if (changed && report_state_changes)
-            tools_print_state_changes(NULL, kbd->state, changed, print_options);
+        if (changed && (tool_options.report & REPORT_STATE_CHANGES))
+            tools_print_state_changes(NULL, kbd->state, changed,
+                                      tool_options.print);
     }
 }
 
@@ -442,10 +451,12 @@ usage(FILE *fp, char *progname)
             "    Enable verbose debugging output\n"
             " -1, --uniline\n"
             "    Enable uniline event output\n"
-            " --multiline\n"
+            " -*, --multiline\n"
             "    Enable uniline event output\n"
             " --short\n"
             "    Shorter event output\n"
+            " --report-frames\n"
+            "    Report frame boundaries; implies --legacy-state-api=false.\n"
             " --report-state-changes\n"
             "    Report changes to the state\n"
             " --no-state-report\n"
@@ -453,7 +464,9 @@ usage(FILE *fp, char *progname)
             " --legacy-state-api[=true|false]\n"
             "    Use legacy state API instead of event API\n"
             " --controls\n"
-            "    Keyboard controls: sticky-keys, latch-to-lock, latch-simultaneous, overlay{1-8}\n"
+            "    Keyboard controls: sticky-keys, sticky-keys-no-simultaneous,\n"
+            "    sticky-keys-latch-to-lock, latch-simultaneous, overlay{1-8},\n"
+            "    mouse-keys, server-actions\n"
             " --modifiers-mapping <MAPPING>\n"
             "    Remap the modifiers\n"
             " --shortcuts-mask <MASK>\n"
@@ -467,8 +480,10 @@ usage(FILE *fp, char *progname)
             " --without-x11-offset\n"
             "    Don't add X11 keycode offset\n"
             "Other:\n"
-            "    --help\n"
-            "    Display this help and exit\n",
+            " --help\n"
+            "    Display this help and exit\n"
+            " --version\n"
+            "    Print version information and exit\n",
             progname, progname,
             xkb_keymap_get_format_label(DEFAULT_INPUT_KEYMAP_FORMAT)
     );
@@ -522,11 +537,13 @@ main(int argc, char *argv[])
         OPT_CONSUMED_MODE,
         OPT_COMPOSE,
         OPT_SHORT,
+        OPT_REPORT_FRAMES,
         OPT_REPORT_STATE,
         OPT_NO_STATE_REPORT,
     };
     static struct option opts[] = {
         {"help",                 no_argument,            0, 'h'},
+        {"version",              no_argument,            0, 'V'},
         {"verbose",              no_argument,            0, OPT_VERBOSE},
         {"uniline",              no_argument,            0, OPT_UNILINE},
         {"multiline",            no_argument,            0, OPT_MULTILINE},
@@ -549,6 +566,7 @@ main(int argc, char *argv[])
         {"consumed-mode",        required_argument,      0, OPT_CONSUMED_MODE},
         {"enable-compose",       no_argument,            0, OPT_COMPOSE},
         {"short",                no_argument,            0, OPT_SHORT},
+        {"report-frames",        no_argument,            0, OPT_REPORT_FRAMES},
         {"report-state-changes", no_argument,            0, OPT_REPORT_STATE},
         {"no-state-report",      no_argument,            0, OPT_NO_STATE_REPORT},
         {"without-x11-offset",   no_argument,            0, OPT_WITHOUT_X11_OFFSET},
@@ -563,11 +581,11 @@ main(int argc, char *argv[])
     struct xkb_machine_options machine_options = xkb_machine_options_new();
 
     /* Ensure synced with usage() and man page */
-    assert(consumed_mode == XKB_CONSUMED_MODE_XKB);
+    assert(tool_options.consumed_mode == XKB_CONSUMED_MODE_XKB);
 
     while (1) {
         int option_index = 0;
-        int opt = getopt_long(argc, argv, "*1h", opts, &option_index);
+        int opt = getopt_long(argc, argv, "*1hV", opts, &option_index);
         if (opt == -1)
             break;
 
@@ -577,11 +595,11 @@ main(int argc, char *argv[])
             break;
         case '1':
         case OPT_UNILINE:
-            print_options |= PRINT_UNILINE;
+            tool_options.print |= PRINT_UNILINE;
             break;
         case '*':
         case OPT_MULTILINE:
-            print_options &= ~PRINT_UNILINE;
+            tool_options.print &= ~PRINT_UNILINE;
             break;
         case OPT_INCLUDE:
             if (num_includes >= ARRAY_SIZE(includes))
@@ -647,23 +665,28 @@ main(int argc, char *argv[])
         case OPT_WITHOUT_X11_OFFSET:
             evdev_offset = 0;
             break;
+        case OPT_REPORT_FRAMES:
+            tool_options.report |= REPORT_FRAMES;
+            /* --legacy-state-api=false is implied */
+            tool_options.events_api = true;
+            break;
         case OPT_REPORT_STATE:
-            report_state_changes = true;
+            tool_options.report |= REPORT_STATE_CHANGES;
             break;
         case OPT_NO_STATE_REPORT:
-            report_state_changes = false;
+            tool_options.report &= ~REPORT_STATE_CHANGES;
             break;
         case OPT_COMPOSE:
             with_compose = true;
             break;
         case OPT_SHORT:
-            print_options &= ~PRINT_VERBOSE;
+            tool_options.print &= ~PRINT_VERBOSE;
             break;
         case OPT_CONSUMED_MODE:
             if (strcmp(optarg, "gtk") == 0) {
-                consumed_mode = XKB_CONSUMED_MODE_GTK;
+                tool_options.consumed_mode = XKB_CONSUMED_MODE_GTK;
             } else if (strcmp(optarg, "xkb") == 0) {
-                consumed_mode = XKB_CONSUMED_MODE_XKB;
+                tool_options.consumed_mode = XKB_CONSUMED_MODE_XKB;
             } else {
                 fprintf(stderr, "ERROR: invalid --consumed-mode \"%s\"\n", optarg);
                 usage(stderr, argv[0]);
@@ -683,7 +706,7 @@ main(int argc, char *argv[])
                 ret = EXIT_INVALID_USAGE;
                 goto error_parse_args;
             }
-            use_events_api = !legacy_api;
+            tool_options.events_api = !legacy_api;
             break;
         }
         case OPT_CONTROLS:
@@ -693,7 +716,7 @@ main(int argc, char *argv[])
                 goto error_parse_args;
             }
             /* --legacy-state-api=false is implied */
-            use_events_api = true;
+            tool_options.events_api = true;
             break;
         case OPT_MODIFIERS_TWEAK_MAPPING:
             if (!tools_parse_modifiers_mappings(optarg, &machine_options)) {
@@ -702,7 +725,7 @@ main(int argc, char *argv[])
                 goto error_parse_args;
             }
             /* --legacy-state-api=false is implied */
-            use_events_api = true;
+            tool_options.events_api = true;
             break;
         case OPT_SHORTCUTS_TWEAK_MASK:
             if (!tools_parse_shortcuts_mask(optarg, &machine_options)) {
@@ -711,7 +734,7 @@ main(int argc, char *argv[])
                 goto error_parse_args;
             }
             /* --legacy-state-api=false is implied */
-            use_events_api = true;
+            tool_options.events_api = true;
             break;
         case OPT_SHORTCUTS_TWEAK_MAPPING:
             if (!tools_parse_shortcuts_mappings(optarg, &machine_options)) {
@@ -720,10 +743,14 @@ main(int argc, char *argv[])
                 goto error_parse_args;
             }
             /* --legacy-state-api=false is implied */
-            use_events_api = true;
+            tool_options.events_api = true;
             break;
         case 'h':
             usage(stdout, argv[0]);
+            ret = EXIT_SUCCESS;
+            goto error_parse_args;
+        case 'V':
+            printf("%s\n", LIBXKBCOMMON_VERSION);
             ret = EXIT_SUCCESS;
             goto error_parse_args;
         default:
@@ -754,8 +781,10 @@ too_much_arguments:
     if (isempty(keymap_path) || strcmp(keymap_path, "-") == 0)
         keymap_path = NULL;
 
-    if (!(print_options & PRINT_VERBOSE) && (print_options & PRINT_UNILINE)) {
-        print_options &= ~PRINT_VERBOSE_ONE_LINE_FIELDS;
+    if (!(tool_options.print & PRINT_VERBOSE) &&
+        (tool_options.print & PRINT_UNILINE))
+    {
+        tool_options.print &= ~PRINT_VERBOSE_ONE_LINE_FIELDS;
     }
 
     enum xkb_context_flags ctx_flags = XKB_CONTEXT_NO_DEFAULT_INCLUDES;
@@ -877,7 +906,7 @@ too_much_arguments:
     free_keyboards(kbds);
 out:
     xkb_compose_table_unref(compose_table);
-    xkb_machine_builder_destroy(machine_builder);
+    xkb_machine_builder_unref(machine_builder);
     xkb_keymap_unref(keymap);
 error_parse_args:
     xkb_machine_options_free(&machine_options);

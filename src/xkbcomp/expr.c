@@ -16,8 +16,8 @@
 #include "text.h"
 #include "xkbcomp/ast.h"
 #include "utils.h"
-#include "utils-numbers.h"
-#include "utils-checked-arithmetic.h"
+#include "util-numbers.h"
+#include "util-checked-arithmetic.h"
 
 typedef bool (*IdentLookupFunc)(struct xkb_context *ctx, const void *priv,
                                 xkb_atom_t field, uint32_t *val_rtrn,
@@ -421,10 +421,10 @@ ExprResolveGroup(const struct xkb_keymap_info *keymap_info,
             ? PARSER_FATAL_ERROR
             : PARSER_RECOVERABLE_ERROR;
 
-    if (result < !!absolute || result > keymap_info->features.max_groups) {
-        log_err(keymap_info->keymap.ctx, XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX,
+    if (result < (int64_t)absolute || result > keymap_info->features.max_groups) {
+        log_err(keymap_info->keymap.ctx, XKB_ERROR_UNSUPPORTED_LAYOUT_INDEX_,
                 "Group index %"PRId64" is out of range (%u..%"PRIu32")\n",
-                result, !!absolute, keymap_info->features.max_groups);
+                result, absolute, keymap_info->features.max_groups);
         return (keymap_info->strict & PARSER_NO_FIELD_TYPE_MISMATCH)
             ? PARSER_FATAL_ERROR
             : PARSER_RECOVERABLE_ERROR;

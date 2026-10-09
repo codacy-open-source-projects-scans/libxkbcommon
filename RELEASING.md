@@ -1,4 +1,4 @@
-# How to make a libxkbcommon release
+# How to make an xkbcommon release
 
 ### Prerequisites
 
@@ -44,7 +44,7 @@
 - [ ] Send an email to the wayland-devel@lists.freedesktop.org mailing list, using this template:
 
 ```
-Subject: [ANNOUNCE] libxkbcommon MAJOR.MINOR.PATCH
+Subject: [ANNOUNCE] xkbcommon MAJOR.MINOR.PATCH
 
 <NEWS & comments for this release>
 
@@ -65,9 +65,6 @@ git commit: <git commit sha>
   Check carefully that there is no warning during generation with Doxygen.
   It may be necessary to use another version of Doxygen to get a clean build.
   Building from source using the main branch is also a good option.
-
-- [ ] Apply manual Doxygen fixes:
-  - [ ] Fix labels of the TOC in the “Release notes” page.
 
 - [ ] Update the `current` symlink: `ln -nsrf doc/<MAJOR.MINOR.PATCH> doc/current`.
 

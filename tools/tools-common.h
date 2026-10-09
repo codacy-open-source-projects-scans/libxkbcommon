@@ -27,20 +27,39 @@ enum {
                                      XKB_KEYMAP_SERIALIZE_KEEP_UNUSED
 };
 
-/* Fields that are printed in the interactive tools. */
+/** Fields that are printed in the interactive tools. */
 enum print_state_options {
+    PRINT_NO_FLAGS = 0,
     PRINT_LAYOUT = (1u << 0),
     PRINT_UNICODE = (1u << 1),
-    PRINT_ALL_FIELDS = ((PRINT_UNICODE << 1) - 1),
-    /*
+
+    PRINT_ALL_FIELDS = (PRINT_LAYOUT | PRINT_UNICODE),
+    /**
      * Fields that can be hidden with the option --short.
      * NOTE: If this value is modified, remember to update the documentation of
      *       the --short option in the corresponding tools.
      */
     PRINT_VERBOSE_ONE_LINE_FIELDS = (PRINT_LAYOUT | PRINT_UNICODE),
+
     PRINT_VERBOSE = (1u << 2),
     PRINT_UNILINE = (1u << 3),
-    DEFAULT_PRINT_OPTIONS = PRINT_ALL_FIELDS | PRINT_VERBOSE | PRINT_UNILINE
+    PRINT_DEFAULT_OPTIONS = PRINT_ALL_FIELDS | PRINT_VERBOSE | PRINT_UNILINE
+};
+
+enum report_options {
+    REPORT_NO_FLAGS = 0,
+    REPORT_STATE_CHANGES = (1u << 0),
+    REPORT_FRAMES = (1u << 1),
+
+    REPORT_DEFAULT_OPTIONS = REPORT_STATE_CHANGES,
+};
+
+struct tools_events_options {
+    enum xkb_consumed_mode consumed_mode;
+    enum print_state_options print;
+    enum report_options report;
+    bool events_api;
+    bool local_state;
 };
 
 void
@@ -57,8 +76,7 @@ tools_print_keycode_state(const char *prefix,
                           struct xkb_compose_state *compose_state,
                           xkb_keycode_t keycode,
                           enum xkb_key_direction direction,
-                          enum xkb_consumed_mode consumed_mode,
-                          enum print_state_options options);
+                          const struct tools_events_options *options);
 
 void
 tools_print_state_changes(const char *prefix, struct xkb_state *state,
@@ -69,8 +87,7 @@ void
 tools_print_events(const char *prefix, struct xkb_state *state,
                    struct xkb_events *events,
                    struct xkb_compose_state *compose_state,
-                   enum xkb_consumed_mode consumed_mode,
-                   enum print_state_options options, bool report_state_changes);
+                   const struct tools_events_options *options);
 
 void
 tools_disable_stdin_echo(void);
@@ -106,6 +123,9 @@ enum tools_arg_optionality {
 bool
 tools_parse_bool(const char *s, enum tools_arg_optionality optional, bool *out);
 
+bool
+tools_parse_mask(const char *s, enum tools_arg_optionality optional, uint32_t *out);
+
 /** Raw modifier masks: plus-separated list of modifier names */
 struct xkb_raw_mod_mask {
     darray_char names;
@@ -127,11 +147,11 @@ struct xkb_machine_mods_raw_mapping {
 struct xkb_machine_options {
     struct {
         struct {
-            enum xkb_keyboard_control_flags affect;
+            enum xkb_keyboard_control_flags affect_flags;
             enum xkb_keyboard_control_flags flags;
         } boolean; /**< Initial boolean controls */
         struct {
-            enum xkb_a11y_flags affect;
+            enum xkb_a11y_flags affect_flags;
             enum xkb_a11y_flags flags;
         } a11y; /**< Initial A11Y flags */
     } controls;
@@ -143,6 +163,7 @@ struct xkb_machine_options {
 
     /** Modifiers tweak */
     darray(struct xkb_machine_mods_raw_mapping) modifiers;
+    enum xkb_machine_flags machine_flags;
 };
 
 #define xkb_machine_options_new() {     \
