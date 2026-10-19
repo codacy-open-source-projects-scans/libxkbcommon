@@ -129,6 +129,25 @@ enum xkb_action_flags {
     ACTION_UNLOCK_ON_PRESS = (1 << 11),
     ACTION_LATCH_ON_PRESS = (1 << 12),
     ACTION_PENDING_COMPUTATION = (1 << 13),
+    /**
+     * Indicate that the action has an explicit `unlockOnPress` value.
+     *
+     * Used *during* keymap compilation.
+     */
+    ACTION_EXPLICIT_UNLOCK_ON_PRESS = (1 << 14),
+    /**
+     * Indicate that the action has an explicit `unlockOnPress` value.
+     *
+     * Used *during* keymap compilation.
+     */
+    ACTION_EXPLICIT_LOCK_ON_RELEASE = (1 << 15),
+    /**
+     * Indicate that the LockGroup action is elligible to
+     * @ref auto-fix-layout-switch-on-modifier-key "automatic behavior fixes".
+     *
+     * Used *after* keymap compilation.
+     */
+    ACTION_AUTO_GROUP_LOCK_ON_MODIFIER_RELEASE = (1 << 16),
 };
 
 enum {
@@ -873,6 +892,16 @@ struct xkb_keymap {
                   ((keymap)->num_keys_low == 0 ? 0 : (keymap)->min_key_code); \
          (iter) < (keymap)->keys + (keymap)->num_keys; \
          (iter)++)
+
+#define xkb_level_foreach_action(iter, level)                 \
+    for (union xkb_action                                     \
+         *(iter) = (likely((level)->num_actions <= 1)         \
+                 ? &(level)->a.action                         \
+                 : (level)->a.actions),                       \
+         /* NOTE: loop is skipped if num_actions == 0 */      \
+         * const iter##_last_ = (iter) + (level)->num_actions;\
+        (iter) < iter##_last_;                                \
+        (iter)++)
 
 #define xkb_mods_foreach(iter, mods_) \
     for ((iter) = (mods_)->mods; \
